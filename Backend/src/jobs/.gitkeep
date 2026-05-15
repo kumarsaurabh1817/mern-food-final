@@ -1,0 +1,4 @@
+# This directory is reserved for background job definitions.
+# The active cron jobs currently live in src/utils/cron.js.
+# As the application grows, move individual job functions here.
+# Example: shopAutoToggleJob.js, rejectionPruneJob.js

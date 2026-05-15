@@ -1,0 +1,535 @@
+# OrangeBite – Full Application Audit Report
+> Scope: Backend (Express/Mongoose) + Frontend (React/Redux) · All flows examined
+
+---
+
+## 🔴 Critical Bugs (Will break at runtime)
+
+### B1 — `idempotencyKeyExpiresAt` TTL index deletes the **entire order document**
+**File:** `Backend/src/models/Order.js` · Line 35
+
+```js
+idempotencyKeyExpiresAt: {
+  type: Date,
+  default: null,
+  index: { expires: 0 }, // ← MongoDB TTL index: deletes the WHOLE document when this date passes!
+}
+```
+**Problem:** `index: { expires: 0 }` is a MongoDB TTL index. When `idempotencyKeyExpiresAt` is set (24 h after checkout), MongoDB will **delete the entire Order document** once that date passes. This means every paid order will silently disappear from the database after 24 hours.
+
+**Fix:** Remove the TTL index. Handle idempotency key expiry by simply ignoring the key in `checkout` when `idempotencyKeyExpiresAt < Date.now()` (already partially done). Use a separate cron job to `$unset` only the key field.
+
+```js
+// WRONG — deletes the document
+idempotencyKeyExpiresAt: { type: Date, index: { expires: 0 } }
+
+// CORRECT — just a plain date field, checked in code
+idempotencyKeyExpiresAt: { type: Date, default: null }
+```
+
+---
+
+### B2 — `deliveryOTP` stored **in plain text** in the database
+**File:** `Backend/src/controllers/order.controller.js` · Line 405
+
+```js
+const order = await Order.create({
+  ...
+  deliveryOTP: rawOTP,       // ← plain 6-digit OTP stored in DB!
+  deliveryOTPHash,           // bcrypt hash also stored
+})
+```
+**Problem:** The comment says "stored with select:false — never returned by default queries", but the plain OTP is still in MongoDB. Anyone with DB read access or a MongoDB leak gets all OTPs. The model has `deliveryOTPHash` for secure verification — there is **no reason** to also store the plain value.
+
+**Fix:** Do not store `deliveryOTP` (the plain text) in the DB at all. Only store `deliveryOTPHash`. Remove the `deliveryOTP` field from the `Order.create()` call and from `getOrders` (which selects `+deliveryOTP` for `user` role).
+
+---
+
+### B3 — Login lockout check happens **after** password comparison
+**File:** `Backend/src/controllers/auth.controller.js` · Lines 179–207
+
+```js
+const isMatch = await user.comparePassword(password);
+if (!isMatch) {
+  user.failedLoginAttempts = (user.failedLoginAttempts || 0) + 1;
+  if (user.failedLoginAttempts >= 5) {
+    user.accountLockedUntil = Date.now() + 15 * 60 * 1000;
+  }
+  await user.save();
+  return res.status(401).json({ ... });
+}
+
+if (user.isBlocked) { ... }      // ← checked AFTER password comparison
+
+// Enforce account lockout
+if (user.accountLockedUntil && user.accountLockedUntil > Date.now()) { ... }
+```
+**Problem:** The lockout and block checks run **after** the password has been compared. An attacker can continue brute-forcing even when the account is locked — each failed attempt still hits `comparePassword` (an expensive bcrypt call). The lockout should be the **first** check after finding the user.
+
+**Fix:** Reorder checks:
+1. Find user (return 401 if not found)
+2. Check `isBlocked`
+3. Check `accountLockedUntil`
+4. Only then run `comparePassword`
+
+---
+
+### B4 — `user.routes.js` double-applies `verifyToken` on change-password
+**File:** `Backend/src/routes/user.routes.js` · Lines 23 & 194
+
+```js
+router.use(verifyToken);        // ← applied to ALL routes in this router
+...
+router.post("/me/change-password", verifyToken, changePassword);  // ← applied AGAIN
+```
+**Problem:** `verifyToken` is called twice for the change-password route. While not catastrophic (JWT verify is idempotent), it's wasteful and a maintenance hazard.
+
+**Fix:** Remove the second `verifyToken` from line 194.
+
+---
+
+### B5 — `admin.controller.js` uses `limit` variable (string) for `Math.ceil` division
+**File:** `Backend/src/controllers/admin.controller.js` · Lines 86 & 231
+
+```js
+const { page = 1, limit = 10 } = req.query;  // limit is a STRING from query params
+...
+totalPages: Math.ceil(total / limit),  // ← divides by "10" (string) → NaN in some engines
+```
+`req.query` values are always strings. `total / "10"` works in JS due to implicit coercion, but it is an accident and `Math.ceil(NaN)` would return NaN. `parsedLimit` is computed but `limit` is used in the `totalPages` calculation.
+
+**Fix:** Use `parsedLimit` consistently.
+
+```js
+totalPages: Math.ceil(total / parsedLimit),  // correct
+```
+Same issue exists in `getShops` (admin controller, line 231).
+
+---
+
+### B6 — `releaseOrder` reverts `out_for_delivery` → `ready_for_pickup` but not `out_for_delivery` → `preparing`
+**File:** `Backend/src/controllers/delivery.controller.js` · Lines 219–224
+
+The comment at line 222 says "For confirmed/preparing states, status stays unchanged — just unassign agent." But the `acceptOrder` function atomically sets status to `out_for_delivery`. So if the agent releases, and the status is something other than `out_for_delivery`, the revert only applies to `out_for_delivery`. This logic is actually correct, but the comment is misleading — confirmed/preparing orders wouldn't have an assigned agent, so the `order.deliveryAgent === req.user.id` check at line 202 would fail. A minor inconsistency but worth clarifying.
+
+---
+
+### B7 — Socket CORS only allows one origin (misses multi-origin from `app.js`)
+**File:** `Backend/src/socket/index.js` · Line 9
+
+```js
+io = new Server(server, {
+  cors: {
+    origin: process.env.CLIENT_URL || "http://localhost:5173",  // Only ONE origin
+    ...
+  }
+});
+```
+**Problem:** `app.js` allows a list of 9 CORS origins (localhost:5173–5175, 127.0.0.1, etc.) but the Socket.IO server only allows one. If the frontend runs on a different port (e.g., 5174), HTTP requests work but WebSocket connections fail with CORS errors.
+
+**Fix:** Mirror the same origin array from `app.js` in the Socket.IO config:
+```js
+const ALLOWED_ORIGINS = [
+  process.env.CLIENT_URL || "http://localhost:5173",
+  "http://localhost:5173", "http://localhost:5174",
+  ...
+];
+io = new Server(server, { cors: { origin: ALLOWED_ORIGINS, credentials: true } });
+```
+
+---
+
+## 🟠 Security Issues
+
+### S1 — `setup-admin` endpoint is publicly accessible with no protection
+**File:** `Backend/src/routes/auth.routes.js` · Line 75
+
+```js
+router.post("/setup-admin", setupAdmin);
+```
+The endpoint self-seals after one admin is created, but until then it's fully open. Any attacker who reaches the API before you do can create the admin account with their credentials.
+
+**Fix:** Either:
+- Add an env-based secret that must be passed in the request body, **or**
+- Add IP allowlisting middleware (only allow localhost)
+
+---
+
+### S2 — `accessToken` stored in `localStorage` (XSS risk)
+**File:** `Frontend/src/features/auth/authSlice.js` · Lines 21 & 78
+
+```js
+localStorage.setItem('accessToken', data.accessToken);
+localStorage.setItem('user', JSON.stringify(data.user));
+```
+Storing JWT access tokens in localStorage exposes them to any XSS attack on the page.
+
+**Recommendation:** Use a short-lived access token (already 15 min) + memory-only storage. The refresh token in an HttpOnly cookie is the correct approach (already done). Consider storing the access token in a module-level variable only (like `let accessToken` in `axios.js` already does) and **not** in localStorage. On page refresh, use the HttpOnly cookie to silently get a new access token via `/auth/refresh` instead of reading from localStorage.
+
+---
+
+### S3 — `createShop` passes entire `req.body` to `Shop.create` — mass assignment
+**File:** `Backend/src/controllers/shop.controller.js` · Lines 156–162
+
+```js
+const shopData = {
+  ...req.body,          // ← no field allowlisting
+  owner: req.user.id,
+  isApproved: false,
+  isOpen: false,
+};
+const shop = await Shop.create(shopData);
+```
+**Problem:** An attacker can set `isSuspended: false`, `commissionRate: 0`, or any other field by including it in the request body. The `isApproved: false` and `isOpen: false` overrides protect two fields but not others.
+
+**Fix:** Allowlist only the fields an owner should set:
+```js
+const { name, description, category, address, deliveryRadiusKm, operatingHours, images } = req.body;
+const shopData = { name, description, category, address, deliveryRadiusKm, operatingHours, images, owner: req.user.id, isApproved: false, isOpen: false };
+```
+
+---
+
+### S4 — `addMenuItem` passes entire `req.body` to `MenuItem.create` — mass assignment
+**File:** `Backend/src/controllers/shop.controller.js` · Line 237
+
+```js
+const item = await MenuItem.create({ ...req.body, shop: shop._id });
+```
+Same issue — `isDeleted: true` could be injected to immediately soft-delete a new item.
+
+**Fix:** Allowlist fields: `{ name, description, price, category, isAvailable, isVeg, image }`.
+
+---
+
+### S5 — `loginRateLimiter` is effectively disabled (max: 1000 in 1 minute)
+**File:** `Backend/src/middleware/rateLimit.middleware.js` · Lines 6–7
+
+```js
+windowMs: 60 * 1000, // 1 minute window
+max: 1000,           // effectively unlimited for testing
+```
+This is noted as a testing mode comment, but if this reaches production it provides zero brute-force protection. The `failedLoginAttempts` lockout at 5 attempts is the only defense.
+
+**Fix:** Restore to `windowMs: 15 * 60 * 1000, max: 10` before deployment. Consider using an environment variable to toggle this.
+
+---
+
+### S6 — Webhook endpoint uses `req.body` (parsed JSON) for HMAC verification instead of raw body
+**File:** `Backend/src/controllers/payment.controller.js` · Lines 149–152
+
+```js
+const expectedSignature = crypto
+  .createHmac("sha256", secret)
+  .update(JSON.stringify(req.body))  // ← re-serialized, not raw body
+  .digest("hex");
+```
+**Problem:** Razorpay signs the **raw** request body bytes. Re-serializing `req.body` via `JSON.stringify` may produce a different string (e.g., key ordering, whitespace) than what Razorpay signed.
+
+**Fix:** Use raw body buffer. In `webhook.routes.js`, use `express.raw({ type: 'application/json' })` instead of `express.json()` and pass the raw buffer to the HMAC.
+
+---
+
+## 🟡 Logic Errors & Flow Issues
+
+### L1 — COD orders: payment flow bypasses `confirmOrder` — status stays `"pending"` forever
+**Flow:** Checkout → `status: "pending"`, `paymentStatus: "pending"` → COD → frontend navigates to tracking. The owner sees a pending order.
+
+**Problem:** For COD orders, the payment is never confirmed via `verifyPayment` (that's online-only). The owner must manually call `confirmOrder`. But there is no automatic transition for COD. If the owner misses it, the order sits in pending. A recommendation: automatically move COD orders to `"confirmed"` in the checkout controller.
+
+---
+
+### L2 — Online payment: if Razorpay modal dismissed, cancel API call may fail silently
+**File:** `Frontend/src/pages/customer/CheckoutPage.jsx` · Lines 343–352
+
+```js
+onDismiss: async () => {
+  try {
+    await api.patch(`/orders/${dbOrderId}/cancel`);
+    ...
+  } catch {
+    dispatch(showToast({ message: 'Payment cancelled. If an order appears, contact support.', type: 'error' }));
+  }
+```
+**Problem:** If the cancel call fails (network error), the order remains in `"pending"` state in the DB. The customer has no pending payment but the order exists. This leaks orders.
+
+**Fix:** Implement a cron job that auto-cancels `pending` online orders older than 30 minutes with no payment activity.
+
+---
+
+### L3 — `markReady` allows transitioning from `"confirmed"` state (skipping `"preparing"`)
+**File:** `Backend/src/controllers/order.controller.js` · Lines 600–604
+
+```js
+if (![" confirmed", "preparing"].includes(order.status))
+  return res.status(400).json({ ... });
+```
+The comment above says the full lifecycle is `pending → confirmed → preparing → out_for_delivery → delivered`, but `markReady` still allows jumping from `confirmed` to `ready_for_pickup`, **skipping** `preparing`. This makes the `markPreparing` step optional and creates inconsistent tracking data.
+
+**Fix:** Enforce strict lifecycle — `markReady` should only accept `"preparing"` status.
+
+---
+
+### L4 — `getOrders` selects `+deliveryOTP` for customer role — exposes OTP in order list
+**File:** `Backend/src/controllers/order.controller.js` · Line 458
+
+```js
+.select(req.user.role === "user" ? "+deliveryOTP" : "")
+```
+The plain OTP is returned to the customer in **every** GET `/orders` request. The OTP should only be visible once at checkout time, not in all subsequent order queries. (Also ties back to B2 — if the plain OTP isn't stored, this is moot.)
+
+---
+
+### L5 — Idempotency key collision returns the **existing order with its full data** to a different user
+**File:** `Backend/src/controllers/order.controller.js` · Lines 255–261
+
+```js
+if (idempotencyKey) {
+  const existingOrder = await Order.findOne({ idempotencyKey });
+  if (existingOrder)
+    return res.status(200).json({ success: true, message: "Idempotent hit", order: existingOrder });
+}
+```
+**Problem:** There is no check that `existingOrder.customer === req.user.id`. If two users somehow generate the same key (unlikely with the current format, but possible with malicious crafting), user B gets user A's order data.
+
+**Fix:** Add `{ idempotencyKey, customer: req.user.id }` to the query.
+
+---
+
+### L6 — Cron job uses server local time — shops in different timezones open/close incorrectly
+**File:** `Backend/src/utils/cron.js` · Lines 10–13
+
+```js
+const now = new Date();
+const currentHours = now.getHours();  // Server local time
+```
+If the server runs in UTC but restaurants are in IST (UTC+5:30), the auto-open/close will be 5.5 hours off.
+
+**Fix:** Use UTC time consistently or store timezone per shop and convert accordingly.
+
+---
+
+### L7 — `checkout` allows `owner` and `admin` roles to place orders
+**File:** `Backend/src/routes/order.routes.js` · Line 88
+
+```js
+router.post("/checkout", requireRole("user", "owner", "admin"), checkoutSchema, validateRequest, checkout);
+```
+Owners and admins can place orders as customers, which creates mixed data in analytics and may bypass business rules.
+
+**Fix:** Restrict checkout to `"user"` role only.
+
+---
+
+### L8 — `getShops` (customer listing) requires `verifyToken` — guests cannot browse restaurants
+**File:** `Backend/src/routes/shop.routes.js` · Lines 59, 82, 107
+
+```js
+router.get("/", verifyToken, getShops);
+router.get("/search", verifyToken, searchShops);
+router.get("/:id", verifyToken, getShopById);
+```
+All shop browsing routes require authentication. A non-logged-in visitor cannot see any restaurants. This is a major UX problem — most food apps allow browsing without login.
+
+**Fix:** Make `GET /api/shops`, `GET /api/shops/search`, and `GET /api/shops/:id` public (remove `verifyToken`), then apply it only for owner/admin management routes.
+
+---
+
+### L9 — `GuestRoute` in `App.jsx` wraps `reset-password/:token` — logged-in users cannot reset password
+**File:** `Frontend/src/App.jsx` · Lines 86–92
+
+```jsx
+<Route element={<GuestRoute />}>
+  ...
+  <Route path="/reset-password/:token" element={<ResetPasswordPage />} />
+</Route>
+```
+If a logged-in user receives a password reset email and clicks the link, `GuestRoute` redirects them away. Logged-in users cannot complete a password reset.
+
+**Fix:** Move `/reset-password/:token` outside the `GuestRoute` wrapper — it should be a fully public route:
+```jsx
+<Route path="/reset-password/:token" element={<ResetPasswordPage />} />
+```
+
+---
+
+### L10 — Cart quantity field inconsistency: `qty` vs `quantity`
+**File:** `Frontend/src/features/cart/cartSlice.js` · Lines 33–37 & `CheckoutPage.jsx` · Lines 285, 599
+
+The cart stores items with `qty` field (`{ ...item, qty: 1 }`). But `CheckoutPage` sends `item.quantity || item.qty || 1` and renders `item.qty || item.quantity || 1`. The dual-field handling is a workaround for an underlying inconsistency. The MenuItem model uses `quantity` (in order items), while the cart slice uses `qty`.
+
+**Fix:** Standardize to a single field. Use `quantity` throughout to match the backend model.
+
+---
+
+### L11 — `signUp` in `authSlice.js` returns `user` but does not set auth state
+**File:** `Frontend/src/features/auth/authSlice.js` · Line 8
+
+```js
+return { user: data.user, session: null };
+```
+The `signUp.fulfilled` handler only sets `state.loading = false` — it does not set `state.user`. The returned payload is discarded. This means after signup, the user is not logged in and must manually sign in.
+
+This might be intentional (owners/delivery boys need approval), but for `user` role, auto-login after signup would be a better UX. At minimum, the `fulfilled` handler should use `action.payload`.
+
+---
+
+## 🟢 Improvements & Missing Features
+
+### I1 — No input validation on `createShop` request body
+There is no `express-validator` schema for creating or updating a shop. A malicious owner can send invalid data types (e.g., `price: "hello"`) that may cause runtime errors.
+
+---
+
+### I2 — `getUsers` (admin) runs `find` and `countDocuments` sequentially, not in parallel
+**File:** `Backend/src/controllers/admin.controller.js` · Lines 74–80
+
+```js
+const users = await User.find(query)...
+const total = await User.countDocuments(query);  // sequential!
+```
+Should use `Promise.all` like `getOrders` already does.
+
+---
+
+### I3 — No pagination support in `getShops` customer listing
+`getShops` in `shop.controller.js` supports `page` and `limit`, but the frontend `HomePage` and `AllRestaurantsPage` may not be using it, leading to loading all shops at once.
+
+---
+
+### I4 — `deliveryOTP` in order model has `select: false` but `deliveryOTPHash` does not
+**File:** `Backend/src/models/Order.js` · Lines 71–72
+
+`deliveryOTPHash` (the bcrypt hash) is returned to all clients by default. Even though it cannot be reversed to find the OTP, it's unnecessary data leakage.
+
+**Fix:** Add `select: false` to `deliveryOTPHash` as well.
+
+---
+
+### I5 — Socket room for `joinOwnerRoom` is unused in any emit call
+**File:** `Backend/src/socket/index.js` · Lines 31–34
+
+The `joinOwnerRoom` event creates `owner_${ownerId}` rooms, but no backend controller ever calls `io.to('owner_...')`. This means real-time owner notifications (new order placed) are never sent.
+
+**Fix:** In `checkout` controller, after creating the order, emit a `new:order` event to `owner_${shop.owner}` room.
+
+---
+
+### I6 — No refresh token rotation cap enforcement in `login` — `slice(-4)` kept arbitrarily
+**File:** `Backend/src/controllers/auth.controller.js` · Lines 233–245
+
+The comment says "keep at most 4 existing + 1 new = 5 max" but this is only applied at login, not at `refresh`. A very active rolling-refresh scenario can accumulate many tokens between logins.
+
+---
+
+### I7 — Demo user credentials hardcoded in `LoginPage.jsx`
+**File:** `Frontend/src/pages/auth/LoginPage.jsx` · Lines 10–15
+
+```js
+const DEMO_USERS = [
+  { label: 'Customer', email: 'customer@demo.com' },
+  ...
+];
+const fillDemo = (email) => {
+  setForm({ email, password: 'demo1234' });  // password hardcoded
+};
+```
+Demo credentials should not be in production code. Move these to env variables or remove entirely.
+
+---
+
+### I8 — `signOut` error is swallowed, but localStorage/token are **not** cleared on failure
+**File:** `Frontend/src/features/auth/authSlice.js` · Lines 29–38
+
+```js
+export const signOut = createAsyncThunk('auth/signOut', async (_, { rejectWithValue }) => {
+  try {
+    await api.post('/auth/logout');
+    setAccessToken(null);
+    localStorage.removeItem('accessToken');
+    localStorage.removeItem('user');
+  } catch (error) {
+    return rejectWithValue(error.response?.data?.message || error.message);
+    // ↑ tokens NOT cleared if API call fails!
+  }
+});
+```
+If the logout API call fails (network error), the user remains "logged in" on the frontend with a token that may still be valid. Always clear local state regardless of API success.
+
+---
+
+### I9 — `platformFee` displayed without rounding in `CheckoutPage`
+**File:** `Frontend/src/pages/customer/CheckoutPage.jsx` · Line 620
+
+```jsx
+<span>₹{platformFee}</span>  // platformFee = subtotal * 0.1, could be 24.999999...
+```
+Platform fee is displayed without `.toFixed(2)`, potentially showing floating point artifacts. Only `total` and `subtotal` call `.toFixed(2)`.
+
+---
+
+### I10 — `MenuItem` model is not in `models` directory listing but imported everywhere
+**File:** `Backend/src/models/MenuItem.js` exists (740 bytes) — but has no text index for search to work. The `searchShops` function searches `MenuItem` by text (`$text: { $search: keyword }`), but `MenuItem.js` would need a text index on `name, description` for this to work efficiently.
+
+---
+
+### I11 — Missing `isBlocked` check after token refresh
+**File:** `Backend/src/controllers/auth.controller.js` · `refresh` function (lines 290–338)
+
+When a refresh token is used to get a new access token, there is no check for `user.isBlocked`. A blocked user whose access token expired can still get new access tokens via the refresh endpoint until their refresh tokens are revoked.
+
+**Fix:** Add `if (user.isBlocked) return 403` in the `refresh` handler.
+
+---
+
+## 📋 Summary Table
+
+| ID | Severity | Category | Description |
+|----|----------|----------|-------------|
+| B1 | 🔴 Critical | Data Loss | TTL index on `idempotencyKeyExpiresAt` deletes whole Order documents |
+| B2 | 🔴 Critical | Security | Plain OTP stored in DB despite having bcrypt hash |
+| B3 | 🔴 Critical | Auth | Lockout check after password comparison → bcrypt still called when locked |
+| B4 | 🟠 Major | Logic | Double `verifyToken` on change-password route |
+| B5 | 🟠 Major | Logic | `limit` string used in `Math.ceil` division instead of `parsedLimit` |
+| B7 | 🟠 Major | Config | Socket CORS only allows 1 origin vs HTTP's 9 origins |
+| S1 | 🟠 Major | Security | `setup-admin` endpoint publicly accessible |
+| S2 | 🟠 Major | Security | Access tokens in localStorage (XSS risk) |
+| S3 | 🟠 Major | Security | `createShop` mass assignment — no body allowlisting |
+| S4 | 🟠 Major | Security | `addMenuItem` mass assignment — no body allowlisting |
+| S5 | 🟠 Major | Security | Login rate limiter effectively disabled (max: 1000) |
+| S6 | 🟠 Major | Security | Webhook HMAC on re-serialized body, not raw bytes |
+| L1 | 🟡 Medium | Flow | COD orders stay `pending` — no auto-confirm |
+| L2 | 🟡 Medium | Flow | Dismissed Razorpay modal may leave orphaned pending orders |
+| L3 | 🟡 Medium | Logic | `markReady` allows skipping `preparing` state |
+| L4 | 🟡 Medium | Security | `getOrders` exposes plain OTP in list response |
+| L5 | 🟡 Medium | Security | Idempotency check missing customer ownership verification |
+| L6 | 🟡 Medium | Logic | Cron uses server local time — timezone bug for shops |
+| L7 | 🟡 Medium | Logic | Owner/admin roles can place customer orders |
+| L8 | 🟡 Medium | UX | Shop browsing requires auth — guests cannot see restaurants |
+| L9 | 🟡 Medium | UX | Reset-password link fails for logged-in users (GuestRoute blocks it) |
+| L10 | 🟡 Medium | Code | `qty` vs `quantity` field inconsistency in cart |
+| L11 | 🟡 Medium | UX | Signup doesn't auto-login customer role users |
+| I1 | 🟢 Low | Validation | No request validation schema for `createShop` / `updateShop` |
+| I2 | 🟢 Low | Performance | `getUsers` runs count sequentially instead of parallel |
+| I3 | 🟢 Low | Performance | Shops list may not be paginated in frontend |
+| I4 | 🟢 Low | Security | `deliveryOTPHash` not hidden with `select: false` |
+| I5 | 🟢 Low | Feature | `joinOwnerRoom` socket room exists but no events are emitted to it |
+| I6 | 🟢 Low | Code | Refresh token cap only enforced at login, not at refresh |
+| I7 | 🟢 Low | Security | Demo credentials hardcoded in `LoginPage.jsx` |
+| I8 | 🟢 Low | Logic | `signOut` doesn't clear local state if API call fails |
+| I9 | 🟢 Low | UX | Platform fee displayed without decimal rounding |
+| I10 | 🟢 Low | Performance | MenuItem missing text index for search |
+| I11 | 🟢 Low | Security | No `isBlocked` check in `refresh` controller |
+
+---
+
+## 🛠️ Top Priority Fixes (Do These First)
+
+1. **B1** — Remove TTL index from `idempotencyKeyExpiresAt` immediately or you will lose all orders after 24h
+2. **L9** — Move `/reset-password/:token` outside GuestRoute (users can't reset passwords)
+3. **B3** — Reorder login lockout checks before password comparison
+4. **L8** — Remove `verifyToken` from public shop-browsing routes
+5. **S3/S4** — Allowlist fields in `createShop` and `addMenuItem`
+6. **S6** — Fix Razorpay webhook to use raw body for HMAC
+7. **B2** — Stop storing plain OTP in the database
+8. **I11** — Add `isBlocked` check to `refresh` controller

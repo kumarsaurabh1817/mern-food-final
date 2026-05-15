@@ -1,0 +1,3 @@
+# This directory is reserved for service-layer modules.
+# Business logic from controllers should be extracted here as the application grows.
+# Example: orderService.js, paymentService.js, notificationService.js
