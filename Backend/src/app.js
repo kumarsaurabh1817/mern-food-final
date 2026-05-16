@@ -47,7 +47,7 @@ app.use(morgan(process.env.NODE_ENV === "production" ? "combined" : "dev"));
 // express.raw() gives us the exact bytes Razorpay signed; we save it to req.rawBody.
 // This must come BEFORE express.json() so the body hasn't been parsed yet.
 app.use(
-  "/api/webhooks",
+  "/webhooks",
   express.raw({ type: "application/json" }),
   (req, _res, next) => {
     // Expose as req.rawBody so the controller can use it for HMAC computation
@@ -61,7 +61,7 @@ app.use(
     next();
   },
 );
-app.use("/api/webhooks", webhookRoutes);
+app.use("/webhooks", webhookRoutes);
 
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true }));
@@ -99,7 +99,7 @@ app.get("/", (_req, res) => {
 
 /**
  * @swagger
- * /api/v1/health:
+ * /v1/health:
  *   get:
  *     tags:
  *       - System
@@ -108,7 +108,7 @@ app.get("/", (_req, res) => {
  *       200:
  *         description: Backend is healthy
  */
-app.get("/api/v1/health", (_req, res) => {
+app.get("/v1/health", (_req, res) => {
   res.status(200).json({
     success: true,
     message: "OrangeBite backend is running",

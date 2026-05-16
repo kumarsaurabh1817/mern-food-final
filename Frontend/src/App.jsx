@@ -50,11 +50,21 @@ const Spinner = () => (
   </div>
 );
 
+const getRoleHomePath = (role) => {
+  if (role === 'admin') return '/admin';
+  if (role === 'owner') return '/owner';
+  if (role === 'delivery_boy') return '/delivery';
+  if (role === 'user') return '/';
+  return '/login';
+};
+
 function ProtectedRoute({ roles }) {
   const { user, loading } = useSelector(s => s.auth);
   if (loading) return <Spinner />;
   if (!user) return <Navigate to="/login" replace />;
-  if (roles && !roles.includes(user.role)) return <Navigate to="/" replace />;
+  if (roles && !roles.includes(user.role)) {
+    return <Navigate to={getRoleHomePath(user.role)} replace />;
+  }
   return <Outlet />;
 }
 
@@ -62,10 +72,7 @@ function GuestRoute() {
   const { user, loading } = useSelector(s => s.auth);
   if (loading) return <Spinner />;
   if (user) {
-    if (user.role === 'admin') return <Navigate to="/admin" replace />;
-    if (user.role === 'owner') return <Navigate to="/owner" replace />;
-    if (user.role === 'delivery_boy') return <Navigate to="/delivery" replace />;
-    return <Navigate to="/" replace />;
+    return <Navigate to={getRoleHomePath(user.role)} replace />;
   }
   return <Outlet />;
 }
