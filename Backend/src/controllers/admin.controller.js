@@ -50,7 +50,7 @@ export const getDashboardKpis = async (req, res, next) => {
   }
 };
 
-// @desc    List all users with filters (role, status, date)
+// @desc    List all users with filters (role, status, search)
 // @route   GET /api/admin/users
 export const getUsers = async (req, res, next) => {
   try {
@@ -58,6 +58,7 @@ export const getUsers = async (req, res, next) => {
       role,
       isBlocked,
       isApprovedByAdmin,
+      search,
       page = 1,
       limit = 10,
     } = req.query;
@@ -71,19 +72,26 @@ export const getUsers = async (req, res, next) => {
     if (isApprovedByAdmin !== undefined)
       query.isApprovedByAdmin = isApprovedByAdmin === "true";
 
-    const users = await User.find(query)
-      .select("-password -refreshTokens")
-      .skip(skip)
-      .limit(parsedLimit)
-      .sort({ createdAt: -1 });
+    // Search by name OR email (case-insensitive)
+    if (search && search.trim()) {
+      const regex = new RegExp(search.trim(), "i");
+      query.$or = [{ name: regex }, { email: regex }];
+    }
 
-    const total = await User.countDocuments(query);
+    const [users, total] = await Promise.all([
+      User.find(query)
+        .select("-password -refreshTokens")
+        .skip(skip)
+        .limit(parsedLimit)
+        .sort({ createdAt: -1 }),
+      User.countDocuments(query),
+    ]);
 
     res.status(200).json({
       success: true,
       count: users.length,
       total,
-      totalPages: Math.ceil(total / parsedLimit), // B5 fix: was dividing by string `limit`
+      totalPages: Math.ceil(total / parsedLimit),
       users,
     });
   } catch (error) {
@@ -137,10 +145,6 @@ export const approveUser = async (req, res, next) => {
 export const rejectUser = async (req, res, next) => {
   try {
     const { reason } = req.body;
-    if (!reason)
-      return res
-        .status(400)
-        .json({ success: false, message: "Rejection reason is required" });
 
     const user = await User.findById(req.params.id);
     if (!user)
@@ -158,19 +162,21 @@ export const rejectUser = async (req, res, next) => {
     user.isApprovedByAdmin = false;
     await user.save();
 
-    try {
-      await sendEmail({
-        to: user.email,
-        subject: "OrangeBite – KYC Application Update",
-        html: `<h2>Hi ${user.name},</h2><p>Unfortunately, your KYC application has been <strong>rejected</strong> for the following reason:</p><blockquote>${reason}</blockquote><p>Please re-submit your documents or contact support.</p>`,
-      });
-    } catch (emailErr) {
-      console.error("Rejection email failed:", emailErr.message);
+    if (reason) {
+      try {
+        await sendEmail({
+          to: user.email,
+          subject: "OrangeBite – KYC Application Update",
+          html: `<h2>Hi ${user.name},</h2><p>Unfortunately, your KYC application has been <strong>rejected</strong> for the following reason:</p><blockquote>${reason}</blockquote><p>Please re-submit your documents or contact support.</p>`,
+        });
+      } catch (emailErr) {
+        console.error("Rejection email failed:", emailErr.message);
+      }
     }
 
     res.status(200).json({
       success: true,
-      message: `KYC rejected and notification sent to ${user.email}`,
+      message: `KYC rejected for ${user.email}`,
     });
   } catch (error) {
     next(error);
@@ -206,19 +212,33 @@ export const toggleBlockUser = async (req, res, next) => {
   }
 };
 
-// @desc    List all shops with approval status
+// @desc    List all shops with approval status + search + status filter
 // @route   GET /api/admin/shops
 export const getShops = async (req, res, next) => {
   try {
-    const { isApproved, page = 1, limit = 10 } = req.query;
+    // Frontend sends: status=all|pending|approved|suspended + search=...
+    const { status, search, page = 1, limit = 10 } = req.query;
     const parsedPage  = Math.max(1, parseInt(page,  10) || 1);
     const parsedLimit = Math.max(1, parseInt(limit, 10) || 10);
     const skip = (parsedPage - 1) * parsedLimit;
 
     let query = {};
-    if (isApproved !== undefined) query.isApproved = isApproved === "true";
 
-    // B5 + I2 fix: run find & count in parallel; use parsed integers throughout
+    // Translate status string → boolean flags
+    if (status === "pending")   { query.isApproved = false; query.isSuspended = false; }
+    if (status === "approved")  { query.isApproved = true;  query.isSuspended = false; }
+    if (status === "suspended") { query.isSuspended = true; }
+
+    // Search by shop name, category, or city (case-insensitive)
+    if (search && search.trim()) {
+      const regex = new RegExp(search.trim(), "i");
+      query.$or = [
+        { name: regex },
+        { category: regex },
+        { "address.city": regex },
+      ];
+    }
+
     const [shops, total] = await Promise.all([
       Shop.find(query)
         .populate("owner", "name email")

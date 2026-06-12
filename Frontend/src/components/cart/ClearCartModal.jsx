@@ -1,46 +1,45 @@
 import { useDispatch, useSelector } from 'react-redux';
-import { hideClearCartModal } from '../../features/ui/uiSlice';
+import { ShoppingCart, AlertTriangle } from 'lucide-react';
+import { selectClearCartModal, hideClearCartModal } from '../../features/ui/uiSlice';
 import { clearShopAndAddItem } from '../../features/cart/cartSlice';
-import { ShoppingCart, X } from 'lucide-react';
 
 export default function ClearCartModal() {
   const dispatch = useDispatch();
-  const modal = useSelector(s => s.ui.clearCartModal);
+  const { visible, pendingItem } = useSelector(selectClearCartModal);
 
-  if (!modal) return null;
+  if (!visible) return null;
 
-  const handleConfirm = () => {
-    dispatch(clearShopAndAddItem(modal));
+  const handleKeep = () => dispatch(hideClearCartModal());
+  const handleClear = () => {
+    if (pendingItem) dispatch(clearShopAndAddItem(pendingItem));
     dispatch(hideClearCartModal());
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-      <div className="bg-white rounded-2xl p-6 max-w-sm w-full mx-4 shadow-2xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6 animate-scale-in">
         <div className="flex items-center gap-3 mb-4">
-          <div className="w-10 h-10 bg-orange-100 rounded-full flex items-center justify-center">
-            <ShoppingCart size={18} className="text-orange-500" />
+          <div className="w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center">
+            <AlertTriangle className="w-5 h-5 text-amber-500" />
           </div>
-          <h3 className="font-semibold text-gray-900">Clear Cart?</h3>
-          <button onClick={() => dispatch(hideClearCartModal())} className="ml-auto text-gray-400 hover:text-gray-600">
-            <X size={18} />
-          </button>
+          <h3 className="text-lg font-bold text-gray-900">Start a new order?</h3>
         </div>
-        <p className="text-sm text-gray-600 mb-6">
-          Your cart has items from <strong>{modal.shopName}</strong>. Adding this item will clear your current cart.
+        <p className="text-gray-500 text-sm mb-6">
+          Your cart has items from a different restaurant. Adding this item will clear your current cart.
         </p>
         <div className="flex gap-3">
           <button
-            onClick={() => dispatch(hideClearCartModal())}
-            className="flex-1 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+            onClick={handleKeep}
+            className="flex-1 py-2.5 rounded-xl border border-gray-200 text-gray-700 font-semibold text-sm hover:bg-gray-50 transition-colors"
           >
-            Keep Cart
+            Keep current
           </button>
           <button
-            onClick={handleConfirm}
-            className="flex-1 py-2.5 rounded-xl bg-orange-500 text-white text-sm font-medium hover:bg-orange-600 transition-colors"
+            onClick={handleClear}
+            className="flex-1 py-2.5 rounded-xl bg-orange-500 text-white font-semibold text-sm hover:bg-orange-600 transition-colors flex items-center justify-center gap-2"
           >
-            Start New
+            <ShoppingCart className="w-4 h-4" />
+            Clear & add
           </button>
         </div>
       </div>

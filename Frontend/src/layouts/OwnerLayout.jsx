@@ -1,294 +1,163 @@
-import { Outlet, Link, useNavigate, useLocation } from 'react-router-dom';
+import { useState } from 'react';
+import { Link, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
-import { signOut } from '../features/auth/authSlice';
-import { showToast } from '../features/ui/uiSlice';
 import {
-  LayoutDashboard, ClipboardList, UtensilsCrossed,
-  Settings, LogOut, Zap, X, Power, UserCircle,
+  UtensilsCrossed, LayoutDashboard, Store,
+  UtensilsCrossed as Menu, ShoppingBag, User,
+  LogOut, PanelLeftClose, PanelLeftOpen
 } from 'lucide-react';
-import { useEffect, useState } from 'react';
-import api from '../lib/axios';
+import { selectUser } from '../features/auth/authSlice';
+import { signOut } from '../features/auth/authSlice';
 
-const NAV_ITEMS = [
-  { to: '/owner',            icon: LayoutDashboard, label: 'Dashboard'     },
-  { to: '/owner/orders',     icon: ClipboardList,   label: 'Orders'        },
-  { to: '/owner/menu',       icon: UtensilsCrossed, label: 'Menu'          },
-  { to: '/owner/shop',       icon: Settings,        label: 'Shop Settings' },
-  { to: '/owner/profile',    icon: UserCircle,      label: 'My Profile'    },
+const navItems = [
+  { to: '/owner', icon: LayoutDashboard, label: 'Dashboard' },
+  { to: '/owner/shop', icon: Store, label: 'Shop Setup' },
+  { to: '/owner/menu', icon: Menu, label: 'Menu' },
+  { to: '/owner/orders', icon: ShoppingBag, label: 'Orders' },
+  { to: '/owner/profile', icon: User, label: 'Profile' },
 ];
 
-/* ── Sidebar (standalone so it renders identically desktop + mobile) ─── */
-function Sidebar({ onClose, shopLive, onToggleShop, profile, isActive, handleSignOut }) {
-  return (
-    <aside style={{
-      width: '240px',
-      height: '100vh',
-      background: '#1E3A5F',
-      display: 'flex',
-      flexDirection: 'column',
-      position: 'sticky',
-      top: 0,
-      flexShrink: 0,
-    }}>
-      {/* Logo */}
-      <div style={{ padding: '24px 20px 18px', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <Link
-            to="/owner"
-            onClick={onClose}
-            aria-label="Go to owner dashboard"
-            style={{ display: 'flex', alignItems: 'center', gap: '10px', textDecoration: 'none' }}
-          >
-            <div style={{
-              width: '34px', height: '34px',
-              background: 'linear-gradient(135deg, #FF7A00, #FF9F43)',
-              borderRadius: '10px',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              boxShadow: '0 4px 12px rgba(255,122,0,0.4)',
-            }}>
-              <Zap size={17} color="#fff" fill="#fff" />
-            </div>
-            <span style={{
-              fontSize: '17px', fontWeight: 800, letterSpacing: '-0.02em',
-              background: 'linear-gradient(135deg, #FF7A00, #FF9F43)',
-              WebkitBackgroundClip: 'text',
-              WebkitTextFillColor: 'transparent',
-              backgroundClip: 'text',
-            }}>
-              Orange Bite
-            </span>
-          </Link>
-          {onClose && (
-            <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.5)', cursor: 'pointer', padding: '4px' }}>
-              <X size={18} />
-            </button>
-          )}
-        </div>
-        <span style={{
-          marginTop: '8px', display: 'inline-block',
-          background: 'rgba(255,122,0,0.15)', color: '#FF9F43',
-          border: '1px solid rgba(255,122,0,0.3)',
-          borderRadius: '100px', padding: '2px 10px',
-          fontSize: '10px', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase',
-        }}>Owner Panel</span>
-      </div>
-
-      {/* Profile */}
-      <div style={{ padding: '16px 20px', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <div style={{
-            width: '40px', height: '40px',
-            background: 'linear-gradient(135deg, #FF7A00, #FF9F43)',
-            borderRadius: '50%',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: '16px', fontWeight: 900, color: '#fff',
-            flexShrink: 0,
-          }}>
-            {profile?.name?.[0]?.toUpperCase() || 'O'}
-          </div>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <p style={{
-              fontSize: '13px', fontWeight: 700, color: '#fff',
-              margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-            }}>
-              {profile?.name || 'Restaurant Owner'}
-            </p>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginTop: '2px' }}>
-              <div style={{
-                width: '7px', height: '7px',
-                background: shopLive ? '#22C55E' : '#EF4444',
-                borderRadius: '50%',
-              }} />
-              <span style={{ fontSize: '11px', color: shopLive ? '#86EFAC' : '#FCA5A5', fontWeight: 600 }}>
-                {shopLive ? 'Online' : 'Closed'}
-              </span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Nav */}
-      <nav style={{ flex: 1, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
-        {NAV_ITEMS.map(item => {
-          const active = isActive(item.to);
-          return (
-            <Link
-              key={item.to}
-              to={item.to}
-              onClick={onClose}
-              style={{
-                display: 'flex', alignItems: 'center', gap: '10px',
-                padding: '11px 14px',
-                textDecoration: 'none',
-                borderRadius: '10px',
-                background: active ? 'linear-gradient(135deg, #FF7A00, #FF9F43)' : 'transparent',
-                color: active ? '#fff' : 'rgba(255,255,255,0.6)',
-                fontWeight: active ? 700 : 500,
-                fontSize: '13px',
-                transition: 'all 0.2s ease',
-                boxShadow: active ? '0 4px 12px rgba(255,122,0,0.35)' : 'none',
-              }}
-              onMouseEnter={e => {
-                if (!active) {
-                  e.currentTarget.style.background = 'rgba(255,255,255,0.08)';
-                  e.currentTarget.style.color = '#fff';
-                }
-              }}
-              onMouseLeave={e => {
-                if (!active) {
-                  e.currentTarget.style.background = 'transparent';
-                  e.currentTarget.style.color = 'rgba(255,255,255,0.6)';
-                }
-              }}
-            >
-              <item.icon size={16} />
-              {item.label}
-            </Link>
-          );
-        })}
-      </nav>
-
-      {/* Bottom — toggle + sign out */}
-      <div style={{ padding: '14px 16px', borderTop: '1px solid rgba(255,255,255,0.08)' }}>
-        {/* Shop Live Toggle */}
-        <button
-          onClick={onToggleShop}
-          style={{
-            width: '100%', padding: '10px 14px',
-            borderRadius: '12px', border: '1px solid',
-            borderColor: shopLive ? 'rgba(34,197,94,0.4)' : 'rgba(239,68,68,0.4)',
-            cursor: 'pointer',
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            background: shopLive ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.08)',
-            transition: 'all 0.3s ease',
-            fontFamily: 'inherit',
-            marginBottom: '8px',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Power size={14} color={shopLive ? '#22C55E' : '#EF4444'} />
-            <span style={{ fontSize: '12px', fontWeight: 700, color: shopLive ? '#86EFAC' : '#FCA5A5' }}>
-              {shopLive ? 'Shop is Live' : 'Shop is Closed'}
-            </span>
-          </div>
-          {/* Toggle pill */}
-          <div style={{
-            width: '36px', height: '18px',
-            background: shopLive ? '#22C55E' : 'rgba(255,255,255,0.2)',
-            borderRadius: '100px', position: 'relative',
-            transition: 'background 0.3s ease',
-          }}>
-            <div style={{
-              position: 'absolute',
-              top: '3px',
-              left: shopLive ? '19px' : '3px',
-              width: '12px', height: '12px',
-              background: '#fff', borderRadius: '50%',
-              transition: 'left 0.3s ease',
-              boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
-            }} />
-          </div>
-        </button>
-
-        {/* Sign out */}
-        <button
-          onClick={handleSignOut}
-          style={{
-            width: '100%', padding: '9px 14px',
-            background: 'transparent', border: '1px solid rgba(255,255,255,0.12)',
-            borderRadius: '10px', cursor: 'pointer',
-            display: 'flex', alignItems: 'center', gap: '8px',
-            color: 'rgba(255,255,255,0.5)', fontSize: '12px', fontWeight: 600,
-            transition: 'all 0.2s ease', fontFamily: 'inherit',
-          }}
-          onMouseEnter={e => { e.currentTarget.style.background = 'rgba(239,68,68,0.12)'; e.currentTarget.style.color = '#FCA5A5'; e.currentTarget.style.borderColor = 'rgba(239,68,68,0.3)'; }}
-          onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'rgba(255,255,255,0.5)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.12)'; }}
-        >
-          <LogOut size={13} />
-          Sign Out
-        </button>
-      </div>
-    </aside>
-  );
-}
+const PAGE_TITLES = {
+  '/owner': 'Dashboard',
+  '/owner/shop': 'Shop Setup',
+  '/owner/menu': 'Menu',
+  '/owner/orders': 'Orders',
+  '/owner/profile': 'My Profile',
+};
 
 export default function OwnerLayout() {
-  const dispatch   = useDispatch();
-  const navigate   = useNavigate();
-  const location   = useLocation();
-  const { user: profile } = useSelector(s => s.auth);
-  const [shop, setShop] = useState(null);
-  const shopLive = !!shop?.isOpen;
+  const dispatch = useDispatch();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const user = useSelector(selectUser);
+  const [collapsed, setCollapsed] = useState(false);
 
-  const fetchShop = async () => {
-    try {
-      const { data } = await api.get('/shops/owner/me');
-      if (data?.success) {
-        setShop(data.shop || null);
-      }
-    } catch (error) {
-      console.error(error);
-    }
-  };
+  const handleLogout = () => { dispatch(signOut()); navigate('/login'); };
 
-  useEffect(() => {
-    fetchShop();
-  }, []);
-
-  const handleSignOut = async () => {
-    await dispatch(signOut());
-    navigate('/login');
-  };
-
-  const isActive = (to) => {
-    const [path, hash] = to.split('#');
-    if (hash) return location.pathname === path && location.hash === `#${hash}`;
-    if (path === '/owner') return location.pathname === '/owner' && !location.hash;
-    return location.pathname.startsWith(path);
-  };
-
-  const handleToggleShop = async () => {
-    if (!shop) return;
-    try {
-      const { data } = await api.patch(`/shops/${shop._id || shop.id}/toggle-open`);
-      if (data?.success) {
-        setShop(prev => (prev ? { ...prev, isOpen: data.isOpen } : prev));
-        dispatch(showToast({ message: data.isOpen ? 'Shop opened' : 'Shop closed', type: 'success' }));
-      }
-    } catch (error) {
-      dispatch(showToast({
-        message: error.response?.data?.message || 'Unable to update shop status',
-        type: 'error'
-      }));
-    }
-  };
-
-  const sidebarProps = {
-    shopLive,
-    onToggleShop: handleToggleShop,
-    profile,
-    isActive,
-    handleSignOut,
-  };
+  const pageTitle = PAGE_TITLES[location.pathname] || 'Restaurant Dashboard';
 
   return (
-    <div className="owner-theme owner-shell">
+    <div className="min-h-screen flex bg-gray-50">
 
-      {/* Desktop Sidebar */}
-      <div className="owner-sidebar-desktop">
-        <Sidebar {...sidebarProps} />
-      </div>
+      {/* ─── Sidebar — fixed so logout never scrolls ─────────────────────── */}
+      <aside
+        className={`
+          fixed top-0 left-0 h-screen z-30
+          ${collapsed ? 'w-16' : 'w-60'}
+          bg-white border-r border-gray-100 shadow-sm
+          flex flex-col
+          transition-all duration-300
+        `}
+      >
+        {/* ── Logo row + toggle button in top-left ── */}
+        <div className="h-16 flex items-center border-b border-gray-100 flex-shrink-0">
 
-      {/* Main Content */}
-      <div className="owner-main">
-        <main className="owner-main-content">
-          <Outlet context={{ shop, setShop, refreshShop: fetchShop }} />
+          {/* Toggle — always top-left, same width as collapsed sidebar icon column */}
+          <button
+            onClick={() => setCollapsed(!collapsed)}
+            className="w-16 h-full flex items-center justify-center text-gray-400 hover:text-orange-500 hover:bg-orange-50 transition-colors flex-shrink-0"
+            title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          >
+            {collapsed
+              ? <PanelLeftOpen className="w-5 h-5" />
+              : <PanelLeftClose className="w-5 h-5" />
+            }
+          </button>
+
+          {/* Brand name — only when expanded */}
+          {!collapsed && (
+            <div className="-ml-1 pr-4">
+              <span className="font-black text-orange-500 text-base block leading-none">OrangeBite</span>
+              <span className="text-xs text-gray-400">Owner Panel</span>
+            </div>
+          )}
+        </div>
+
+        {/* ── Nav links — scrollable area ── */}
+        <nav className="flex-1 overflow-y-auto py-4 px-2 space-y-1">
+          {navItems.map(({ to, icon: Icon, label }) => {
+            const active =
+              location.pathname === to ||
+              (to !== '/owner' && location.pathname.startsWith(to));
+            return (
+              <Link
+                key={to}
+                to={to}
+                title={collapsed ? label : undefined}
+                className={`
+                  flex items-center ${collapsed ? 'justify-center' : 'gap-3'}
+                  px-3 py-2.5 rounded-xl text-sm font-medium transition-colors
+                  ${active
+                    ? 'bg-orange-50 text-orange-600'
+                    : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+                  }
+                `}
+              >
+                <Icon className="w-5 h-5 flex-shrink-0" />
+                {!collapsed && <span>{label}</span>}
+              </Link>
+            );
+          })}
+        </nav>
+
+        {/* ── User info + Logout — pinned at bottom, never scrolls ── */}
+        <div className="flex-shrink-0 border-t border-gray-100">
+          {!collapsed && (
+            <div className="flex items-center gap-3 px-4 pt-4 pb-3">
+              <div className="w-8 h-8 bg-orange-100 rounded-full flex items-center justify-center flex-shrink-0">
+                <User className="w-4 h-4 text-orange-600" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-gray-800 truncate">{user?.name}</p>
+                <p className="text-xs text-gray-400 truncate">{user?.email}</p>
+              </div>
+            </div>
+          )}
+
+          <div className={`${collapsed ? 'p-2' : 'px-4 pb-4'}`}>
+            <button
+              onClick={handleLogout}
+              title="Logout"
+              className={`
+                ${collapsed ? 'w-full justify-center' : 'w-full'}
+                flex items-center gap-2 text-sm text-red-500
+                hover:text-red-600 hover:bg-red-50
+                py-2 px-2 rounded-xl transition-colors font-medium
+              `}
+            >
+              <LogOut className="w-4 h-4 flex-shrink-0" />
+              {!collapsed && <span>Logout</span>}
+            </button>
+          </div>
+        </div>
+      </aside>
+
+      {/* ── Main content — offset by sidebar width ── */}
+      <div
+        className={`
+          flex-1 flex flex-col min-w-0
+          ${collapsed ? 'ml-16' : 'ml-60'}
+          transition-all duration-300
+        `}
+      >
+        {/* Top header */}
+        <header className="h-16 bg-white border-b border-gray-100 flex items-center justify-between px-6 flex-shrink-0 shadow-sm sticky top-0 z-20">
+          <div>
+            <h1 className="text-lg font-bold text-gray-800">{pageTitle}</h1>
+            <p className="text-xs text-gray-400">Welcome back, {user?.name}</p>
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 bg-orange-50 border border-orange-100 px-3 py-1.5 rounded-xl">
+              <User className="w-4 h-4 text-orange-500" />
+              <span className="text-xs font-semibold text-orange-600 capitalize">Owner</span>
+            </div>
+          </div>
+        </header>
+
+        <main className="flex-1 overflow-auto p-6">
+          <Outlet />
         </main>
       </div>
-
-      <style>{`
-        .owner-sidebar-desktop { display: flex; }
-      `}</style>
     </div>
   );
 }

@@ -1,146 +1,162 @@
 import { useState, useEffect } from 'react';
+import { Store, CheckCircle, PauseCircle, PlayCircle, Search, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 import api from '../../lib/axios';
 import { useDispatch } from 'react-redux';
 import { showToast } from '../../features/ui/uiSlice';
-import { CheckCircle, AlertOctagon, Search, MapPin, Filter, Store } from 'lucide-react';
 
-const SHOP_IMG = 'https://images.pexels.com/photos/1640777/pexels-photo-1640777.jpeg?auto=compress&cs=tinysrgb&w=200';
+const STATUS_FILTER = ['all', 'pending', 'approved', 'suspended'];
 
 export default function AdminShopsPage() {
   const dispatch = useDispatch();
   const [shops, setShops] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('all');
-  const [actionLoading, setActionLoading] = useState(null);
-
-  useEffect(() => { fetchShops(); }, []);
+  const [searchInput, setSearchInput] = useState('');
+  const [committedSearch, setCommittedSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [actioning, setActioning] = useState(null);
 
   const fetchShops = async () => {
+    setLoading(true);
     try {
-      const { data } = await api.get('/admin/shops?limit=1000');
-      if (data.success) {
-        setShops(data.shops || []);
-      }
-    } catch (error) {
-      console.error(error);
+      const params = new URLSearchParams({ page, limit: 20 });
+      if (filter !== 'all') params.set('status', filter);
+      if (committedSearch) params.set('search', committedSearch);
+      const { data } = await api.get(`/admin/shops?${params}`);
+      setShops(data.shops || data || []);
+      setTotalPages(data.totalPages || 1);
+    } catch (_) {}
+    setLoading(false);
+  };
+
+  useEffect(() => { fetchShops(); }, [filter, page, committedSearch]);
+
+  const handleSearch = (e) => {
+    e.preventDefault();
+    setPage(1);
+    setCommittedSearch(searchInput.trim());
+  };
+
+  const clearSearch = () => {
+    setSearchInput('');
+    setCommittedSearch('');
+    setPage(1);
+  };
+
+  const action = async (shopId, endpoint, msg) => {
+    setActioning(shopId + endpoint);
+    try {
+      await api.patch(endpoint);
+      dispatch(showToast({ message: msg, type: 'success' }));
+      fetchShops();
+    } catch (err) {
+      dispatch(showToast({ message: err.response?.data?.message || 'Action failed', type: 'error' }));
     } finally {
-      setLoading(false);
+      setActioning(null);
     }
   };
 
-  const approve = async (id, name) => {
-    setActionLoading(id);
-    try {
-      const { data } = await api.patch(`/admin/shops/${id}/approve`);
-      if (data.success) {
-        dispatch(showToast({ message: `${name} approved!`, type: 'success' }));
-        fetchShops();
-      }
-    } catch (error) {
-      dispatch(showToast({ message: error.response?.data?.message || 'Error approving shop', type: 'error' }));
-    } finally {
-      setActionLoading(null);
-    }
+  const getStatusBadge = (shop) => {
+    if (shop.isSuspended) return { label: 'Suspended', cls: 'bg-red-50 text-red-600 border-red-200' };
+    if (!shop.isApproved) return { label: 'Pending', cls: 'bg-amber-50 text-amber-600 border-amber-200' };
+    return { label: 'Approved', cls: 'bg-green-50 text-green-600 border-green-200' };
   };
-
-  const toggleSuspend = async (id, name, isSuspended) => {
-    setActionLoading(id);
-    try {
-      const { data } = await api.patch(`/admin/shops/${id}/suspend`);
-      if (data.success) {
-        dispatch(showToast({ message: `${name} ${isSuspended ? 'reinstated' : 'suspended'}`, type: 'success' }));
-        fetchShops();
-      }
-    } catch (error) {
-      dispatch(showToast({ message: error.response?.data?.message || 'Error suspending shop', type: 'error' }));
-    } finally {
-      setActionLoading(null);
-    }
-  };
-
-  const filtered = shops.filter(s => {
-    const term = search.toLowerCase();
-    const name = (s.name || '').toLowerCase();
-    const city = (s.address?.city || s.city || '').toLowerCase();
-    const matchSearch = !search || name.includes(term) || city.includes(term);
-    if (filter === 'pending') return matchSearch && !(s.isApproved || s.is_approved);
-    if (filter === 'suspended') return matchSearch && (s.isSuspended || s.is_suspended);
-    if (filter === 'active') return matchSearch && (s.isApproved || s.is_approved) && !(s.isSuspended || s.is_suspended);
-    return matchSearch;
-  });
-
-  if (loading) return <div className="flex items-center justify-center h-64"><div className="w-8 h-8 border-4 border-orange-500 border-t-transparent rounded-full animate-spin" /></div>;
 
   return (
-    <div className="pb-10 font-sans">
-      <div className="flex flex-col md:flex-row gap-4 mb-8">
-        <div className="relative flex-1">
-          <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" />
-          <input value={search} onChange={e => setSearch(e.target.value)}
-            className="w-full pl-12 pr-4 py-3 bg-white border border-gray-100 rounded-2xl text-sm font-semibold focus:outline-none focus:border-orange-500 focus:ring-4 focus:ring-orange-500/10 shadow-sm transition-all"
-            placeholder="Search shops..." />
-        </div>
-        <div className="relative min-w-[200px]">
-          <Filter size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" />
-          <select value={filter} onChange={e => setFilter(e.target.value)}
-            className="w-full pl-12 pr-4 py-3 bg-white border border-gray-100 rounded-2xl text-sm font-bold text-gray-700 appearance-none focus:outline-none focus:border-orange-500 focus:ring-4 focus:ring-orange-500/10 shadow-sm transition-all">
-            <option value="all">All Shops</option>
-            <option value="pending">Pending Approval</option>
-            <option value="active">Active</option>
-            <option value="suspended">Suspended</option>
-          </select>
+    <div>
+      <div className="mb-6">
+        <h1 className="text-2xl font-black text-gray-900">Shop Management</h1>
+        <p className="text-gray-400 text-sm mt-1">Approve restaurants and manage shop status</p>
+      </div>
+
+      <div className="flex flex-col sm:flex-row gap-3 mb-5">
+      <form onSubmit={handleSearch} className="flex gap-2 flex-1">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <input
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              placeholder="Search shops by name, category or city..."
+              className="w-full pl-9 pr-9 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-orange-400"
+            />
+            {searchInput && (
+              <button type="button" onClick={clearSearch} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-lg leading-none">&times;</button>
+            )}
+          </div>
+          <button type="submit" className="bg-orange-500 text-white px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-orange-600">Search</button>
+        </form>
+        <div className="flex gap-1">
+          {STATUS_FILTER.map((f) => (
+            <button key={f} onClick={() => { setFilter(f); setPage(1); }}
+              className={`px-3 py-2 rounded-xl text-xs font-semibold capitalize transition-colors ${filter === f ? 'bg-gray-800 text-white' : 'bg-white border border-gray-200 text-gray-500 hover:bg-gray-50'}`}>
+              {f}
+            </button>
+          ))}
         </div>
       </div>
 
-      {filtered.length === 0 ? (
-        <div className="text-center py-16 bg-white rounded-[2rem] border border-gray-100 shadow-sm">
-           <Store className="mx-auto h-12 w-12 text-gray-300 mb-3" />
-           <p className="text-gray-400 font-bold uppercase tracking-wider">No shops found</p>
+      {loading ? (
+        <div className="space-y-3">{[...Array(4)].map((_, i) => <div key={i} className="bg-white rounded-2xl h-20 animate-pulse" />)}</div>
+      ) : shops.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-gray-100 p-12 text-center shadow-sm">
+          <Store className="w-12 h-12 mx-auto text-gray-200 mb-3" />
+          <p className="text-gray-400">No shops found</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filtered.map(shop => (
-            <div key={shop._id || shop.id} className="bg-white rounded-[2rem] overflow-hidden shadow-sm border border-gray-100 hover:shadow-lg hover:border-orange-100 transition-all group">
-              <div className="relative h-40 bg-gray-100 overflow-hidden">
-                <img src={shop.images?.[0] || shop.imageUrl || SHOP_IMG} alt={shop.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                  onError={e => { e.target.src = SHOP_IMG; }} />
-                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
-                <div className="absolute bottom-4 left-4 right-4">
-                  <p className="text-white font-extrabold text-xl tracking-tight truncate">{shop.name}</p>
-                  <p className="text-white/80 font-semibold text-sm truncate uppercase tracking-wider mt-0.5">{shop.cuisineType?.[0] || shop.category}</p>
+        <div className="space-y-3">
+          {shops.map((shop) => {
+            const badge = getStatusBadge(shop);
+            return (
+              <div key={shop._id} className="bg-white rounded-2xl border border-gray-100 p-4 shadow-sm flex items-center gap-4">
+                {shop.images?.[0] ? (
+                  <img src={shop.images[0]} alt={shop.name} className="w-14 h-14 rounded-xl object-cover flex-shrink-0" />
+                ) : (
+                  <div className="w-14 h-14 rounded-xl bg-orange-50 flex items-center justify-center flex-shrink-0">
+                    <Store className="w-6 h-6 text-orange-300" />
+                  </div>
+                )}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <p className="font-bold text-gray-900 truncate">{shop.name}</p>
+                    <span className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border ${badge.cls}`}>{badge.label}</span>
+                  </div>
+                  <p className="text-xs text-gray-400 mt-0.5">{shop.category} • {shop.address?.city}</p>
+                  <p className="text-xs text-gray-400">Owner: {shop.owner?.name || shop.owner?.email || 'N/A'}</p>
                 </div>
-                <div className="absolute top-3 right-3">
-                  {shop.isSuspended || shop.is_suspended ? (
-                    <span className="bg-red-500 text-white text-[10px] uppercase tracking-wider font-bold px-2.5 py-1 rounded-lg shadow-sm">Suspended</span>
-                  ) : shop.isApproved || shop.is_approved ? (
-                    <span className="bg-green-500 text-white text-[10px] uppercase tracking-wider font-bold px-2.5 py-1 rounded-lg shadow-sm">Active</span>
-                  ) : (
-                    <span className="bg-amber-500 text-white text-[10px] uppercase tracking-wider font-bold px-2.5 py-1 rounded-lg shadow-sm">Pending</span>
-                  )}
-                </div>
-              </div>
-              <div className="p-5">
-                <div className="flex items-center gap-4 text-xs font-semibold text-gray-500 mb-5">
-                  <span className="flex items-center gap-1.5 truncate"><MapPin size={12} className="text-gray-400" />{shop.address?.city || shop.city || 'N/A'}</span>
-                </div>
-                <div className="flex gap-3">
-                  {!(shop.isApproved || shop.is_approved) && !(shop.isSuspended || shop.is_suspended) && (
-                    <button onClick={() => approve(shop._id || shop.id, shop.name)} disabled={actionLoading === (shop._id || shop.id)}
-                      className="flex-1 flex items-center justify-center gap-1.5 py-2.5 bg-green-50 hover:bg-green-100 text-green-700 rounded-xl text-xs font-bold uppercase tracking-wider transition-colors disabled:opacity-50">
-                      <CheckCircle size={14} /> Approve
+                <div className="flex items-center gap-1.5 flex-shrink-0">
+                  {!shop.isApproved && !shop.isSuspended && (
+                    <button
+                      onClick={() => action(shop._id, `/admin/shops/${shop._id}/approve`, 'Shop approved!')}
+                      disabled={!!actioning}
+                      className="flex items-center gap-1.5 bg-green-500 hover:bg-green-600 text-white text-xs font-semibold px-3 py-2 rounded-xl disabled:opacity-50"
+                    >
+                      {actioning === shop._id + `/admin/shops/${shop._id}/approve` ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle className="w-3.5 h-3.5" />}
+                      Approve
                     </button>
                   )}
-                  <button onClick={() => toggleSuspend(shop._id || shop.id, shop.name, shop.isSuspended || shop.is_suspended)} disabled={actionLoading === (shop._id || shop.id)}
-                    className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider transition-colors disabled:opacity-50 ${
-                      shop.isSuspended || shop.is_suspended ? 'bg-blue-50 hover:bg-blue-100 text-blue-700' : 'bg-red-50 hover:bg-red-100 text-red-600'
-                    }`}>
-                    <AlertOctagon size={14} /> {shop.isSuspended || shop.is_suspended ? 'Reinstate' : 'Suspend'}
-                  </button>
+                  {shop.isApproved && (
+                    <button
+                      onClick={() => action(shop._id, `/admin/shops/${shop._id}/suspend`, shop.isSuspended ? 'Shop reinstated!' : 'Shop suspended')}
+                      disabled={!!actioning}
+                      className={`flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-xl disabled:opacity-50 ${shop.isSuspended ? 'bg-blue-50 text-blue-600 hover:bg-blue-100' : 'bg-red-50 text-red-500 hover:bg-red-100'}`}
+                    >
+                      {shop.isSuspended ? <PlayCircle className="w-3.5 h-3.5" /> : <PauseCircle className="w-3.5 h-3.5" />}
+                      {shop.isSuspended ? 'Reinstate' : 'Suspend'}
+                    </button>
+                  )}
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
+        </div>
+      )}
+
+      {totalPages > 1 && (
+        <div className="flex items-center justify-center gap-3 mt-6">
+          <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} className="p-2 rounded-xl border border-gray-200 hover:bg-gray-50 disabled:opacity-40"><ChevronLeft className="w-4 h-4" /></button>
+          <span className="text-sm text-gray-600">Page {page} of {totalPages}</span>
+          <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages} className="p-2 rounded-xl border border-gray-200 hover:bg-gray-50 disabled:opacity-40"><ChevronRight className="w-4 h-4" /></button>
         </div>
       )}
     </div>

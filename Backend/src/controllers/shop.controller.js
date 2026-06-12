@@ -9,8 +9,9 @@ export const getShops = async (req, res, next) => {
     const limit = parseInt(req.query.limit, 10) || 10;
     const skip = (page - 1) * limit;
 
-    // FIX #10: Exclude suspended shops from the customer listing
-    const filter = { isOpen: true, isApproved: true, isSuspended: false };
+    // Show all approved, non-suspended shops regardless of isOpen status
+    // so customers can browse even when a shop is temporarily closed.
+    const filter = { isApproved: true, isSuspended: false };
 
     // Run find + count in parallel — same pattern as getOrders controller
     const [shops, total] = await Promise.all([
@@ -34,7 +35,9 @@ export const getShops = async (req, res, next) => {
 // @desc    Search shops and items by keyword, veg/non-veg, price
 export const searchShops = async (req, res, next) => {
   try {
-    const { keyword, isVeg, maxPrice } = req.query;
+    // Bug fix: frontend sends ?q=... but controller was reading keyword
+    const { q, keyword, isVeg, maxPrice } = req.query;
+    const searchTerm = q || keyword; // support both param names
 
     // FIX #11: Exclude suspended shops from search results
     let shopFilter = { isApproved: true, isSuspended: false };
@@ -45,15 +48,15 @@ export const searchShops = async (req, res, next) => {
 
     let shops = [];
 
-    if (keyword) {
+    if (searchTerm) {
       // Search both Shops and MenuItems
       const matchingShops = await Shop.find({
         ...shopFilter,
-        $text: { $search: keyword },
+        $text: { $search: searchTerm },
       });
       const matchingItems = await MenuItem.find({
         ...menuFilter,
-        $text: { $search: keyword },
+        $text: { $search: searchTerm },
       }).populate("shop");
 
       const shopMap = new Map();
@@ -246,11 +249,14 @@ export const addMenuItem = async (req, res, next) => {
     // S4 FIX: Allowlist only valid menu item fields.
     // Spreading req.body would allow injection of isDeleted:true, shop:<other ID>, etc.
     const { name, description, price, category, isAvailable, isVeg, image } = req.body;
-    const item = await MenuItem.create({
+    await MenuItem.create({
       name, description, price, category, isAvailable, isVeg, image,
       shop: shop._id,   // always set from the route param, never from body
     });
-    res.status(201).json({ success: true, message: "Menu item added", item });
+
+    // Return the full updated menu list so frontend can sync state
+    const menuItems = await MenuItem.find({ shop: shop._id, isDeleted: { $ne: true } });
+    res.status(201).json({ success: true, message: "Menu item added", menuItems });
   } catch (error) {
     next(error);
   }
@@ -291,7 +297,9 @@ export const updateMenuItem = async (req, res, next) => {
         .status(404)
         .json({ success: false, message: "Menu item not found" });
 
-    res.status(200).json({ success: true, message: "Menu item updated", item });
+    // Return the full updated menu list so frontend can sync state
+    const menuItems = await MenuItem.find({ shop: shop._id, isDeleted: { $ne: true } });
+    res.status(200).json({ success: true, message: "Menu item updated", item, menuItems });
   } catch (error) {
     next(error);
   }
@@ -321,7 +329,9 @@ export const deleteMenuItem = async (req, res, next) => {
     item.isDeleted = true;
     await item.save();
 
-    res.status(200).json({ success: true, message: "Menu item deleted" });
+    // Return the full updated menu list so frontend can sync state
+    const menuItems = await MenuItem.find({ shop: shop._id, isDeleted: { $ne: true } });
+    res.status(200).json({ success: true, message: "Menu item deleted", menuItems });
   } catch (error) {
     next(error);
   }

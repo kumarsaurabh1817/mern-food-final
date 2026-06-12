@@ -1,412 +1,221 @@
 import { useState, useEffect } from 'react';
-import { useDispatch, useSelector } from 'react-redux';
-import { useNavigate } from 'react-router-dom';
+import { useSelector } from 'react-redux';
+import { selectUser } from '../../features/auth/authSlice';
+import { User, MapPin, Lock, Plus, Edit2, Trash2, Check, X, Loader2 } from 'lucide-react';
 import api from '../../lib/axios';
-import { setUser, signOut } from '../../features/auth/authSlice';
+import { useDispatch } from 'react-redux';
 import { showToast } from '../../features/ui/uiSlice';
-import {
-  User, Mail, Phone, Lock, Eye, EyeOff,
-  CheckCircle2, AlertTriangle, Loader2, ArrowLeft,
-  Shield, Edit3, Save, X,
-} from 'lucide-react';
 
-// ─── Reusable styled input ────────────────────────────────────────────────────
-function Field({ label, type = 'text', value, onChange, disabled, placeholder, error, endIcon, onEndClick, autoComplete }) {
-  return (
-    <div>
-      <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: '#374151', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-        {label}
-      </label>
-      <div style={{ position: 'relative' }}>
-        <input
-          type={type}
-          value={value}
-          onChange={onChange}
-          disabled={disabled}
-          placeholder={placeholder}
-          autoComplete={autoComplete}
-          style={{
-            width: '100%', padding: '11px 14px', paddingRight: endIcon ? '42px' : '14px',
-            borderRadius: '12px', border: `1.5px solid ${error ? '#EF4444' : '#E5E7EB'}`,
-            background: disabled ? '#F9FAFB' : '#fff', outline: 'none',
-            fontSize: '14px', color: '#1A1A1A', fontFamily: 'inherit',
-            fontWeight: 500, boxSizing: 'border-box',
-            transition: 'border-color 0.2s ease',
-            cursor: disabled ? 'not-allowed' : 'text',
-          }}
-          onFocus={e => { if (!disabled && !error) e.target.style.borderColor = '#FF7A00'; }}
-          onBlur={e => { if (!error) e.target.style.borderColor = '#E5E7EB'; }}
-        />
-        {endIcon && (
-          <button
-            type="button"
-            onClick={onEndClick}
-            style={{
-              position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)',
-              background: 'none', border: 'none', cursor: 'pointer', color: '#9CA3AF', padding: '2px',
-            }}
-          >
-            {endIcon}
-          </button>
-        )}
-      </div>
-      {error && <p style={{ margin: '4px 0 0', fontSize: '11px', color: '#EF4444', fontWeight: 600 }}>{error}</p>}
-    </div>
-  );
-}
+const TABS = [
+  { id: 'profile', label: 'Profile', icon: User },
+  { id: 'addresses', label: 'Addresses', icon: MapPin },
+  { id: 'password', label: 'Password', icon: Lock },
+];
 
-// ─── Section Card ─────────────────────────────────────────────────────────────
-function Card({ title, icon: Icon, children }) {
-  return (
-    <div style={{
-      background: '#fff', border: '1px solid #E5E7EB', borderRadius: '20px',
-      padding: '24px', boxShadow: '0 2px 10px rgba(0,0,0,0.05)', marginBottom: '20px',
-    }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
-        <div style={{ width: '32px', height: '32px', borderRadius: '10px', background: 'rgba(255,122,0,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <Icon size={16} color="#FF7A00" />
-        </div>
-        <h2 style={{ margin: 0, fontSize: '15px', fontWeight: 800, color: '#1A1A1A' }}>{title}</h2>
-      </div>
-      {children}
-    </div>
-  );
-}
-
-// ─── Alert Banner ─────────────────────────────────────────────────────────────
-function Alert({ type, message }) {
-  const isSuccess = type === 'success';
-  return (
-    <div style={{
-      display: 'flex', alignItems: 'flex-start', gap: '10px', padding: '12px 14px',
-      borderRadius: '12px', marginBottom: '14px',
-      background: isSuccess ? '#F0FDF4' : '#FEF2F2',
-      border: `1.5px solid ${isSuccess ? '#BBF7D0' : '#FECACA'}`,
-    }}>
-      {isSuccess
-        ? <CheckCircle2 size={16} color="#16A34A" style={{ flexShrink: 0, marginTop: '1px' }} />
-        : <AlertTriangle size={16} color="#EF4444" style={{ flexShrink: 0, marginTop: '1px' }} />}
-      <p style={{ margin: 0, fontSize: '13px', fontWeight: 600, color: isSuccess ? '#15803D' : '#DC2626' }}>{message}</p>
-    </div>
-  );
-}
-
-// ─── Profile Page ─────────────────────────────────────────────────────────────
 export default function ProfilePage() {
   const dispatch = useDispatch();
-  const navigate = useNavigate();
-  const { user } = useSelector(s => s.auth);
-
-  // ── Profile form state
-  const [profile, setProfile]         = useState({ name: '', phone: '' });
+  const user = useSelector(selectUser);
+  const [tab, setTab] = useState('profile');
+  const [profileForm, setProfileForm] = useState({ name: '', phone: '' });
   const [profileLoading, setProfileLoading] = useState(false);
-  const [profileMsg, setProfileMsg]   = useState(null); // { type, text }
-  const [editingProfile, setEditingProfile] = useState(false);
-
-  // ── Password form state
-  const [pwForm, setPwForm] = useState({ currentPassword: '', newPassword: '', confirm: '' });
-  const [showPw, setShowPw] = useState({ current: false, new: false, confirm: false });
+  const [addresses, setAddresses] = useState([]);
+  const [addrLoading, setAddrLoading] = useState(true);
+  const [addrForm, setAddrForm] = useState(null);
+  const [pwForm, setPwForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
+  const [pwLoading, setPwLoading] = useState(false);
   const [pwErrors, setPwErrors] = useState({});
-  const [pwLoading, setPwLoading]   = useState(false);
-  const [pwMsg, setPwMsg]           = useState(null);
 
-  // Load user data into form on mount
   useEffect(() => {
-    if (user) setProfile({ name: user.name || '', phone: user.phone || '' });
+    if (user) setProfileForm({ name: user.name || '', phone: user.phone || '' });
+    api.get('/users/me/addresses').then(({ data }) => setAddresses(data.addresses || [])).catch(() => {}).finally(() => setAddrLoading(false));
   }, [user]);
 
-  // ── Profile save
-  const handleProfileSave = async () => {
-    if (!profile.name.trim()) {
-      setProfileMsg({ type: 'error', text: 'Name cannot be empty.' });
-      return;
-    }
+  const saveProfile = async (e) => {
+    e.preventDefault();
     setProfileLoading(true);
-    setProfileMsg(null);
     try {
-      const { data } = await api.patch('/users/me', {
-        name: profile.name.trim(),
-        phone: profile.phone.trim() || undefined,
-      });
-      if (data.success) {
-        dispatch(setUser({ ...user, ...data.user }));
-        setProfileMsg({ type: 'success', text: 'Profile updated successfully!' });
-        setEditingProfile(false);
-        dispatch(showToast({ message: 'Profile updated!', type: 'success' }));
-      } else {
-        setProfileMsg({ type: 'error', text: data.message || 'Update failed.' });
-      }
+      await api.patch('/users/me', profileForm);
+      dispatch(showToast({ message: 'Profile updated!', type: 'success' }));
     } catch (err) {
-      setProfileMsg({ type: 'error', text: err.response?.data?.message || 'Failed to update profile.' });
+      dispatch(showToast({ message: err.response?.data?.message || 'Update failed', type: 'error' }));
     } finally {
       setProfileLoading(false);
     }
   };
 
-  // ── Password validation
-  const validatePw = () => {
-    const errs = {};
-    if (!pwForm.currentPassword) errs.currentPassword = 'Current password is required.';
-    if (!pwForm.newPassword) {
-      errs.newPassword = 'New password is required.';
-    } else if (pwForm.newPassword.length < 8) {
-      errs.newPassword = 'At least 8 characters required.';
-    } else if (!/[A-Z]/.test(pwForm.newPassword)) {
-      errs.newPassword = 'Must include an uppercase letter.';
-    } else if (!/[0-9]/.test(pwForm.newPassword)) {
-      errs.newPassword = 'Must include a number.';
-    } else if (!/[@$!%*#?&^()_\-+=<>]/.test(pwForm.newPassword)) {
-      errs.newPassword = 'Must include a special character.';
+  const saveAddress = async (e) => {
+    e.preventDefault();
+    try {
+      if (addrForm._id) {
+        const { data } = await api.patch(`/users/me/addresses/${addrForm._id}`, addrForm);
+        setAddresses(data.addresses || []);
+      } else {
+        const { data } = await api.post('/users/me/addresses', addrForm);
+        setAddresses(data.addresses || []);
+      }
+      setAddrForm(null);
+      dispatch(showToast({ message: 'Address saved!', type: 'success' }));
+    } catch (err) {
+      dispatch(showToast({ message: 'Failed to save address', type: 'error' }));
     }
-    if (!pwForm.confirm) {
-      errs.confirm = 'Please confirm your new password.';
-    } else if (pwForm.newPassword !== pwForm.confirm) {
-      errs.confirm = 'Passwords do not match.';
-    }
-    setPwErrors(errs);
-    return Object.keys(errs).length === 0;
   };
 
-  // ── Password save
-  const handlePasswordChange = async (e) => {
-    e.preventDefault();
-    if (!validatePw()) return;
-    setPwLoading(true);
-    setPwMsg(null);
+  const deleteAddress = async (id) => {
     try {
-      const { data } = await api.post('/users/me/change-password', {
-        currentPassword: pwForm.currentPassword,
-        newPassword: pwForm.newPassword,
-      });
-      if (data.success) {
-        setPwMsg({ type: 'success', text: data.message });
-        setPwForm({ currentPassword: '', newPassword: '', confirm: '' });
-        dispatch(showToast({ message: 'Password changed! Logging out other devices.', type: 'success' }));
-        // Log out after 3s since all refresh tokens are now revoked
-        setTimeout(async () => {
-          await dispatch(signOut());
-          navigate('/login');
-        }, 3000);
-      } else {
-        setPwMsg({ type: 'error', text: data.message || 'Password change failed.' });
-      }
+      const { data } = await api.delete(`/users/me/addresses/${id}`);
+      setAddresses(data.addresses || []);
+      dispatch(showToast({ message: 'Address removed', type: 'info' }));
+    } catch (_) {
+      dispatch(showToast({ message: 'Failed to delete address', type: 'error' }));
+    }
+  };
+
+  const changePassword = async (e) => {
+    e.preventDefault();
+    const errs = {};
+    if (!pwForm.currentPassword) errs.currentPassword = 'Required';
+    if (pwForm.newPassword.length < 8) errs.newPassword = 'Min 8 characters';
+    if (pwForm.newPassword !== pwForm.confirmPassword) errs.confirmPassword = 'Passwords do not match';
+    if (Object.keys(errs).length) { setPwErrors(errs); return; }
+    setPwLoading(true);
+    try {
+      await api.post('/users/me/change-password', { currentPassword: pwForm.currentPassword, newPassword: pwForm.newPassword });
+      setPwForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
+      dispatch(showToast({ message: 'Password changed!', type: 'success' }));
     } catch (err) {
-      setPwMsg({ type: 'error', text: err.response?.data?.message || 'Failed to change password.' });
+      dispatch(showToast({ message: err.response?.data?.message || 'Failed to change password', type: 'error' }));
     } finally {
       setPwLoading(false);
     }
   };
 
-  const togglePw = (field) => setShowPw(p => ({ ...p, [field]: !p[field] }));
-
-  const PwBtn = ({ field }) => (showPw[field] ? <EyeOff size={15} /> : <Eye size={15} />);
-
   return (
-    <div style={{ maxWidth: '680px', margin: '0 auto', padding: '32px 20px 100px', fontFamily: "'Plus Jakarta Sans', sans-serif" }}>
-
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '28px' }}>
-        <button
-          onClick={() => navigate(-1)}
-          style={{ width: '40px', height: '40px', borderRadius: '12px', border: '1.5px solid #E5E7EB', background: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#374151', flexShrink: 0 }}
-        >
-          <ArrowLeft size={18} />
-        </button>
+    <div className="max-w-2xl mx-auto px-4 sm:px-6 py-8">
+      <div className="flex items-center gap-4 mb-8">
+        <div className="w-16 h-16 bg-orange-100 rounded-full flex items-center justify-center">
+          <User className="w-8 h-8 text-orange-500" />
+        </div>
         <div>
-          <h1 style={{ margin: 0, fontSize: '24px', fontWeight: 800, color: '#1A1A1A', letterSpacing: '-0.03em' }}>My Profile</h1>
-          <p style={{ margin: 0, fontSize: '13px', color: '#6B7280', fontWeight: 500 }}>Manage your personal details and account security</p>
+          <h1 className="text-xl font-black text-gray-900">{user?.name}</h1>
+          <p className="text-sm text-gray-400">{user?.email}</p>
+          <span className="text-xs bg-orange-50 text-orange-500 font-medium px-2 py-0.5 rounded-full mt-1 inline-block capitalize">{user?.role?.replace('_', ' ')}</span>
         </div>
       </div>
 
-      {/* Avatar strip */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '16px', padding: '20px 24px', background: 'linear-gradient(135deg, #FF7A00, #FF9F43)', borderRadius: '20px', marginBottom: '20px' }}>
-        <div style={{ width: '56px', height: '56px', borderRadius: '16px', background: 'rgba(255,255,255,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '2px solid rgba(255,255,255,0.4)' }}>
-          <User size={26} color="#fff" />
-        </div>
-        <div>
-          <p style={{ margin: 0, fontSize: '18px', fontWeight: 800, color: '#fff' }}>{user?.name || 'User'}</p>
-          <p style={{ margin: '2px 0 0', fontSize: '13px', color: 'rgba(255,255,255,0.8)', fontWeight: 600 }}>{user?.email}</p>
-          <span style={{ marginTop: '6px', display: 'inline-block', fontSize: '10px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.06em', background: 'rgba(255,255,255,0.25)', color: '#fff', padding: '2px 10px', borderRadius: '100px' }}>
-            {user?.role || 'user'}
-          </span>
-        </div>
+      {/* Tabs */}
+      <div className="flex gap-1 bg-gray-100 rounded-xl p-1 mb-6">
+        {TABS.map(({ id, label, icon: Icon }) => (
+          <button
+            key={id}
+            onClick={() => setTab(id)}
+            className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-medium transition-colors ${tab === id ? 'bg-white text-orange-500 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+          >
+            <Icon className="w-4 h-4" /> {label}
+          </button>
+        ))}
       </div>
 
-      {/* ── Section 1: Personal Info ── */}
-      <Card title="Personal Information" icon={User}>
-        {profileMsg && <Alert type={profileMsg.type} message={profileMsg.text} />}
+      {/* Profile tab */}
+      {tab === 'profile' && (
+        <form onSubmit={saveProfile} className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm space-y-4">
+          <div>
+            <label className="text-sm font-medium text-gray-700 block mb-1.5">Full name</label>
+            <input value={profileForm.name} onChange={(e) => setProfileForm({ ...profileForm, name: e.target.value })} className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-orange-400" />
+          </div>
+          <div>
+            <label className="text-sm font-medium text-gray-700 block mb-1.5">Phone number</label>
+            <input value={profileForm.phone} onChange={(e) => setProfileForm({ ...profileForm, phone: e.target.value })} placeholder="+91 9876543210" className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-orange-400" />
+          </div>
+          <div>
+            <label className="text-sm font-medium text-gray-700 block mb-1.5">Email address</label>
+            <input value={user?.email || ''} disabled className="w-full px-4 py-2.5 border border-gray-100 rounded-xl text-sm bg-gray-50 text-gray-400" />
+          </div>
+          <button type="submit" disabled={profileLoading} className="bg-orange-500 hover:bg-orange-600 text-white font-semibold px-5 py-2.5 rounded-xl text-sm transition-colors flex items-center gap-2 disabled:opacity-60">
+            {profileLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Save changes
+          </button>
+        </form>
+      )}
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-          <Field
-            label="Full Name"
-            value={profile.name}
-            onChange={e => setProfile(p => ({ ...p, name: e.target.value }))}
-            disabled={!editingProfile}
-            placeholder="Your full name"
-          />
-          <Field
-            label="Email Address"
-            type="email"
-            value={user?.email || ''}
-            disabled
-            placeholder="Email (cannot be changed)"
-          />
-          <Field
-            label="Phone Number"
-            type="tel"
-            value={profile.phone}
-            onChange={e => setProfile(p => ({ ...p, phone: e.target.value }))}
-            disabled={!editingProfile}
-            placeholder="e.g. 9876543210"
-            autoComplete="tel"
-          />
-        </div>
-
-        <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
-          {!editingProfile ? (
-            <button
-              onClick={() => { setEditingProfile(true); setProfileMsg(null); }}
-              style={{
-                display: 'flex', alignItems: 'center', gap: '7px',
-                padding: '11px 20px', borderRadius: '12px', border: 'none',
-                background: 'linear-gradient(135deg, #FF7A00, #FF9F43)',
-                color: '#fff', fontWeight: 700, fontSize: '13px',
-                cursor: 'pointer', fontFamily: 'inherit',
-                boxShadow: '0 4px 12px rgba(255,122,0,0.3)',
-              }}
-            >
-              <Edit3 size={14} /> Edit Profile
-            </button>
-          ) : (
+      {/* Addresses tab */}
+      {tab === 'addresses' && (
+        <div className="space-y-3">
+          {addrLoading ? <p className="text-gray-400 text-sm text-center py-8">Loading...</p> : (
             <>
-              <button
-                onClick={handleProfileSave}
-                disabled={profileLoading}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: '7px',
-                  padding: '11px 20px', borderRadius: '12px', border: 'none',
-                  background: profileLoading ? '#FED7AA' : 'linear-gradient(135deg, #FF7A00, #FF9F43)',
-                  color: '#fff', fontWeight: 700, fontSize: '13px',
-                  cursor: profileLoading ? 'wait' : 'pointer', fontFamily: 'inherit',
-                  boxShadow: profileLoading ? 'none' : '0 4px 12px rgba(255,122,0,0.3)',
-                }}
-              >
-                {profileLoading ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Save size={14} />}
-                {profileLoading ? 'Saving...' : 'Save Changes'}
-              </button>
-              <button
-                onClick={() => { setEditingProfile(false); setProfile({ name: user?.name || '', phone: user?.phone || '' }); setProfileMsg(null); }}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: '7px',
-                  padding: '11px 20px', borderRadius: '12px',
-                  border: '1.5px solid #E5E7EB', background: '#fff',
-                  color: '#6B7280', fontWeight: 700, fontSize: '13px',
-                  cursor: 'pointer', fontFamily: 'inherit',
-                }}
-              >
-                <X size={14} /> Cancel
-              </button>
+              {addresses.map((addr) => (
+                <div key={addr._id} className="bg-white rounded-2xl border border-gray-100 p-4 shadow-sm">
+                  {addrForm?._id === addr._id ? (
+                    <form onSubmit={saveAddress} className="space-y-3">
+                      <div className="grid grid-cols-2 gap-3">
+                        <input placeholder="Label" value={addrForm.label || ''} onChange={(e) => setAddrForm({ ...addrForm, label: e.target.value })} className="col-span-2 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-orange-400" />
+                        <input placeholder="Street" value={addrForm.street || ''} onChange={(e) => setAddrForm({ ...addrForm, street: e.target.value })} required className="col-span-2 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-orange-400" />
+                        <input placeholder="City" value={addrForm.city || ''} onChange={(e) => setAddrForm({ ...addrForm, city: e.target.value })} required className="px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-orange-400" />
+                        <input placeholder="State" value={addrForm.state || ''} onChange={(e) => setAddrForm({ ...addrForm, state: e.target.value })} required className="px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-orange-400" />
+                        <input placeholder="ZIP" value={addrForm.zipCode || ''} onChange={(e) => setAddrForm({ ...addrForm, zipCode: e.target.value })} required className="px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-orange-400" />
+                      </div>
+                      <div className="flex gap-2">
+                        <button type="submit" className="bg-orange-500 text-white text-sm font-semibold px-4 py-2 rounded-xl hover:bg-orange-600"><Check className="w-4 h-4" /></button>
+                        <button type="button" onClick={() => setAddrForm(null)} className="text-gray-400 px-4 py-2 rounded-xl hover:bg-gray-50 border border-gray-200"><X className="w-4 h-4" /></button>
+                      </div>
+                    </form>
+                  ) : (
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="font-semibold text-sm text-gray-800">{addr.label || 'Address'}</p>
+                        <p className="text-xs text-gray-400 mt-0.5">{addr.street}, {addr.city}, {addr.state} {addr.zipCode}</p>
+                      </div>
+                      <div className="flex gap-1.5">
+                        <button onClick={() => setAddrForm({ ...addr })} className="p-2 rounded-xl hover:bg-gray-50 text-gray-400"><Edit2 className="w-4 h-4" /></button>
+                        <button onClick={() => deleteAddress(addr._id)} className="p-2 rounded-xl hover:bg-red-50 text-gray-400 hover:text-red-500"><Trash2 className="w-4 h-4" /></button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+              {addrForm && !addrForm._id && (
+                <form onSubmit={saveAddress} className="bg-white rounded-2xl border border-orange-200 p-4 shadow-sm space-y-3">
+                  <div className="grid grid-cols-2 gap-3">
+                    <input placeholder="Label (Home, Work...)" value={addrForm.label || ''} onChange={(e) => setAddrForm({ ...addrForm, label: e.target.value })} className="col-span-2 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-orange-400" />
+                    <input placeholder="Street address" value={addrForm.street || ''} onChange={(e) => setAddrForm({ ...addrForm, street: e.target.value })} required className="col-span-2 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-orange-400" />
+                    <input placeholder="City" value={addrForm.city || ''} onChange={(e) => setAddrForm({ ...addrForm, city: e.target.value })} required className="px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-orange-400" />
+                    <input placeholder="State" value={addrForm.state || ''} onChange={(e) => setAddrForm({ ...addrForm, state: e.target.value })} required className="px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-orange-400" />
+                    <input placeholder="ZIP Code" value={addrForm.zipCode || ''} onChange={(e) => setAddrForm({ ...addrForm, zipCode: e.target.value })} required className="px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-orange-400" />
+                  </div>
+                  <div className="flex gap-2">
+                    <button type="submit" className="bg-orange-500 text-white text-sm font-semibold px-4 py-2 rounded-xl hover:bg-orange-600 flex items-center gap-1"><Check className="w-4 h-4" /> Save</button>
+                    <button type="button" onClick={() => setAddrForm(null)} className="text-gray-400 px-4 py-2 rounded-xl hover:bg-gray-50 border border-gray-200">Cancel</button>
+                  </div>
+                </form>
+              )}
+              {!addrForm && (
+                <button onClick={() => setAddrForm({ label: '', street: '', city: '', state: '', zipCode: '' })} className="w-full border border-dashed border-gray-200 rounded-2xl py-4 text-sm text-gray-400 hover:border-orange-300 hover:text-orange-400 transition-colors flex items-center justify-center gap-2">
+                  <Plus className="w-4 h-4" /> Add new address
+                </button>
+              )}
             </>
           )}
         </div>
-      </Card>
+      )}
 
-      {/* ── Section 2: Email Info ── */}
-      <div style={{ padding: '14px 16px', borderRadius: '14px', background: '#F0FDF4', border: '1.5px solid #BBF7D0', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-        <Mail size={15} color="#16A34A" />
-        <p style={{ margin: 0, fontSize: '12px', color: '#15803D', fontWeight: 600 }}>
-          Your email address <strong>{user?.email}</strong> is verified and cannot be changed. Use "Forgot Password" if you lose access.
-        </p>
-      </div>
-
-      {/* ── Section 3: Change Password ── */}
-      <Card title="Change Password" icon={Shield}>
-        {pwMsg && <Alert type={pwMsg.type} message={pwMsg.text} />}
-
-        {pwMsg?.type === 'success' ? (
-          <div style={{ textAlign: 'center', padding: '16px 0' }}>
-            <p style={{ fontSize: '13px', color: '#6B7280' }}>
-              Redirecting you to login in 3 seconds…
-            </p>
-          </div>
-        ) : (
-          <form onSubmit={handlePasswordChange} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-            <Field
-              label="Current Password"
-              type={showPw.current ? 'text' : 'password'}
-              value={pwForm.currentPassword}
-              onChange={e => { setPwForm(p => ({ ...p, currentPassword: e.target.value })); setPwErrors(p => ({ ...p, currentPassword: '' })); }}
-              placeholder="Enter your current password"
-              error={pwErrors.currentPassword}
-              endIcon={<PwBtn field="current" />}
-              onEndClick={() => togglePw('current')}
-              autoComplete="current-password"
-            />
-            <Field
-              label="New Password"
-              type={showPw.new ? 'text' : 'password'}
-              value={pwForm.newPassword}
-              onChange={e => { setPwForm(p => ({ ...p, newPassword: e.target.value })); setPwErrors(p => ({ ...p, newPassword: '' })); }}
-              placeholder="Min. 8 chars, 1 uppercase, 1 number, 1 special"
-              error={pwErrors.newPassword}
-              endIcon={<PwBtn field="new" />}
-              onEndClick={() => togglePw('new')}
-              autoComplete="new-password"
-            />
-            <Field
-              label="Confirm New Password"
-              type={showPw.confirm ? 'text' : 'password'}
-              value={pwForm.confirm}
-              onChange={e => { setPwForm(p => ({ ...p, confirm: e.target.value })); setPwErrors(p => ({ ...p, confirm: '' })); }}
-              placeholder="Repeat your new password"
-              error={pwErrors.confirm}
-              endIcon={<PwBtn field="confirm" />}
-              onEndClick={() => togglePw('confirm')}
-              autoComplete="new-password"
-            />
-
-            {/* Password strength hints */}
-            {pwForm.newPassword && (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                {[
-                  { ok: pwForm.newPassword.length >= 8, label: '8+ chars' },
-                  { ok: /[A-Z]/.test(pwForm.newPassword), label: 'Uppercase' },
-                  { ok: /[0-9]/.test(pwForm.newPassword), label: 'Number' },
-                  { ok: /[@$!%*#?&^()_\-+=<>]/.test(pwForm.newPassword), label: 'Special char' },
-                ].map(({ ok, label }) => (
-                  <span key={label} style={{ fontSize: '11px', fontWeight: 700, padding: '2px 10px', borderRadius: '100px', background: ok ? '#F0FDF4' : '#F3F4F6', color: ok ? '#16A34A' : '#9CA3AF', border: `1px solid ${ok ? '#BBF7D0' : '#E5E7EB'}` }}>
-                    {ok ? '✓' : '○'} {label}
-                  </span>
-                ))}
-              </div>
-            )}
-
-            <div style={{ padding: '12px 14px', borderRadius: '12px', background: '#FFF7ED', border: '1px solid #FED7AA' }}>
-              <p style={{ margin: 0, fontSize: '11px', color: '#C2410C', fontWeight: 600 }}>
-                ⚠️ Changing your password will log you out from all other devices.
-              </p>
+      {/* Password tab */}
+      {tab === 'password' && (
+        <form onSubmit={changePassword} className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm space-y-4">
+          {[
+            { name: 'currentPassword', label: 'Current password' },
+            { name: 'newPassword', label: 'New password' },
+            { name: 'confirmPassword', label: 'Confirm new password' },
+          ].map(({ name, label }) => (
+            <div key={name}>
+              <label className="text-sm font-medium text-gray-700 block mb-1.5">{label}</label>
+              <input type="password" value={pwForm[name]} onChange={(e) => { setPwForm({ ...pwForm, [name]: e.target.value }); setPwErrors({ ...pwErrors, [name]: '' }); }}
+                className={`w-full px-4 py-2.5 border rounded-xl text-sm focus:outline-none ${pwErrors[name] ? 'border-red-300 focus:border-red-400' : 'border-gray-200 focus:border-orange-400'}`} />
+              {pwErrors[name] && <p className="text-xs text-red-500 mt-1">{pwErrors[name]}</p>}
             </div>
-
-            <button
-              type="submit"
-              disabled={pwLoading}
-              style={{
-                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
-                padding: '13px', borderRadius: '14px', border: 'none',
-                background: pwLoading ? '#FED7AA' : 'linear-gradient(135deg, #1E3A5F, #2D5282)',
-                color: '#fff', fontWeight: 700, fontSize: '14px',
-                cursor: pwLoading ? 'wait' : 'pointer', fontFamily: 'inherit',
-                boxShadow: pwLoading ? 'none' : '0 4px 14px rgba(30,58,95,0.3)',
-                transition: 'all 0.2s ease',
-              }}
-            >
-              {pwLoading
-                ? <><Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} /> Changing Password…</>
-                : <><Lock size={15} /> Change Password</>}
-            </button>
-          </form>
-        )}
-      </Card>
+          ))}
+          <button type="submit" disabled={pwLoading} className="bg-orange-500 hover:bg-orange-600 text-white font-semibold px-5 py-2.5 rounded-xl text-sm transition-colors flex items-center gap-2 disabled:opacity-60">
+            {pwLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Lock className="w-4 h-4" />} Update password
+          </button>
+        </form>
+      )}
     </div>
   );
 }

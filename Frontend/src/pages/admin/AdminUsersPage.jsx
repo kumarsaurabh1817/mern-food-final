@@ -1,187 +1,182 @@
 import { useState, useEffect } from 'react';
+import { Users, Search, CheckCircle, XCircle, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 import api from '../../lib/axios';
 import { useDispatch } from 'react-redux';
 import { showToast } from '../../features/ui/uiSlice';
-import { CheckCircle, Ban, Search, User, Store, Truck, ShieldCheck, Filter } from 'lucide-react';
 
-const ROLE_ICONS = { user: User, owner: Store, delivery_boy: Truck, admin: ShieldCheck };
-const ROLE_COLORS = { user: 'bg-blue-100 text-blue-700', owner: 'bg-orange-100 text-orange-700', delivery_boy: 'bg-teal-100 text-teal-700', admin: 'bg-purple-100 text-purple-700' };
+const ROLE_COLORS = { user: 'bg-blue-50 text-blue-600', owner: 'bg-purple-50 text-purple-600', delivery_boy: 'bg-orange-50 text-orange-600', admin: 'bg-red-50 text-red-600' };
+
+const FILTER_ROLES = ['all', 'user', 'owner', 'delivery_boy', 'admin'];
 
 export default function AdminUsersPage() {
   const dispatch = useDispatch();
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState('all');
-  const [actionLoading, setActionLoading] = useState(null);
-
-  useEffect(() => { fetchUsers(); }, []);
+  const [searchInput, setSearchInput] = useState('');
+  const [committedSearch, setCommittedSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [actioning, setActioning] = useState(null);
 
   const fetchUsers = async () => {
+    setLoading(true);
     try {
-      const { data } = await api.get('/admin/users?limit=1000');
-      if (data.success) {
-        setUsers(data.users || []);
-      }
-    } catch (error) {
-      console.error(error);
-    } finally {
-      setLoading(false);
-    }
+      const params = new URLSearchParams({ page, limit: 20 });
+      if (roleFilter !== 'all') params.set('role', roleFilter);
+      if (committedSearch) params.set('search', committedSearch);
+      const { data } = await api.get(`/admin/users?${params}`);
+      setUsers(data.users || data || []);
+      setTotalPages(data.totalPages || 1);
+    } catch (_) {}
+    setLoading(false);
   };
 
-  const approve = async (id, name) => {
-    setActionLoading(id + '_approve');
-    try {
-      const { data } = await api.patch(`/admin/users/${id}/approve`);
-      if (data.success) {
-        dispatch(showToast({ message: `${name} approved`, type: 'success' }));
-        fetchUsers();
-      }
-    } catch (error) {
-      dispatch(showToast({ message: error.response?.data?.message || 'Error approving user', type: 'error' }));
-    } finally {
-      setActionLoading(null);
-    }
+  useEffect(() => { fetchUsers(); }, [roleFilter, page, committedSearch]);
+
+  const handleSearch = (e) => {
+    e.preventDefault();
+    setPage(1);
+    setCommittedSearch(searchInput.trim());
   };
 
-  const toggleBlock = async (id, name, isBlocked) => {
-    setActionLoading(id + '_block');
-    try {
-      const { data } = await api.patch(`/admin/users/${id}/block`);
-      if (data.success) {
-        dispatch(showToast({ message: `${name} ${isBlocked ? 'unblocked' : 'blocked'}`, type: 'success' }));
-        fetchUsers();
-      }
-    } catch (error) {
-      dispatch(showToast({ message: error.response?.data?.message || 'Error blocking user', type: 'error' }));
-    } finally {
-      setActionLoading(null);
-    }
+  const clearSearch = () => {
+    setSearchInput('');
+    setCommittedSearch('');
+    setPage(1);
   };
 
-  const filtered = users.filter(u => {
-    const term = search.toLowerCase();
-    const name = (u.name || '').toLowerCase();
-    const id = (u._id || u.id || '').toString();
-    const matchSearch = !search || name.includes(term) || id.includes(search);
-    const matchRole = roleFilter === 'all' || u.role === roleFilter;
-    return matchSearch && matchRole;
-  });
-
-  if (loading) return <div className="flex items-center justify-center h-64"><div className="w-8 h-8 border-4 border-orange-500 border-t-transparent rounded-full animate-spin" /></div>;
+  const action = async (userId, endpoint, successMsg) => {
+    setActioning(userId + endpoint);
+    try {
+      await api.patch(endpoint);
+      dispatch(showToast({ message: successMsg, type: 'success' }));
+      fetchUsers();
+    } catch (err) {
+      dispatch(showToast({ message: err.response?.data?.message || 'Action failed', type: 'error' }));
+    } finally {
+      setActioning(null);
+    }
+  };
 
   return (
-    <div className="pb-10 font-sans">
-      <div className="flex flex-col md:flex-row md:items-center gap-4 mb-8">
-        <div className="relative flex-1">
-          <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" />
-          <input value={search} onChange={e => setSearch(e.target.value)}
-            className="w-full pl-12 pr-4 py-3 bg-white border border-gray-100 rounded-2xl text-sm font-semibold focus:outline-none focus:border-orange-500 focus:ring-4 focus:ring-orange-500/10 shadow-sm transition-all"
-            placeholder="Search by name or ID..." />
-        </div>
-        <div className="relative min-w-[200px]">
-          <Filter size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" />
-          <select value={roleFilter} onChange={e => setRoleFilter(e.target.value)}
-            className="w-full pl-12 pr-4 py-3 bg-white border border-gray-100 rounded-2xl text-sm font-bold text-gray-700 appearance-none focus:outline-none focus:border-orange-500 focus:ring-4 focus:ring-orange-500/10 shadow-sm transition-all">
-            <option value="all">All Roles</option>
-            <option value="user">Customers</option>
-            <option value="owner">Owners</option>
-            <option value="delivery_boy">Delivery</option>
-            <option value="admin">Admins</option>
-          </select>
+    <div>
+      <div className="mb-6">
+        <h1 className="text-2xl font-black text-gray-900">User Management</h1>
+        <p className="text-gray-400 text-sm mt-1">Manage KYC approvals and user accounts</p>
+      </div>
+
+      {/* Filters */}
+      <div className="flex flex-col sm:flex-row gap-3 mb-5">
+      <form onSubmit={handleSearch} className="flex gap-2 flex-1">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <input
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              placeholder="Search by name or email..."
+              className="w-full pl-9 pr-9 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-orange-400"
+            />
+            {searchInput && (
+              <button type="button" onClick={clearSearch} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-lg leading-none">&times;</button>
+            )}
+          </div>
+          <button type="submit" className="bg-orange-500 text-white px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-orange-600">Search</button>
+        </form>
+        <div className="flex gap-1">
+          {FILTER_ROLES.map((r) => (
+            <button key={r} onClick={() => { setRoleFilter(r); setPage(1); }}
+              className={`px-3 py-2 rounded-xl text-xs font-semibold capitalize transition-colors ${roleFilter === r ? 'bg-gray-800 text-white' : 'bg-white border border-gray-200 text-gray-500 hover:bg-gray-50'}`}>
+              {r === 'delivery_boy' ? 'Delivery' : r}
+            </button>
+          ))}
         </div>
       </div>
 
-      <div className="bg-white rounded-[2rem] overflow-hidden shadow-sm border border-gray-100">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
+      {loading ? (
+        <div className="bg-white rounded-2xl border border-gray-100 divide-y divide-gray-50">
+          {[...Array(5)].map((_, i) => <div key={i} className="h-16 animate-pulse bg-white" />)}
+        </div>
+      ) : users.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-gray-100 p-12 text-center shadow-sm">
+          <Users className="w-12 h-12 mx-auto text-gray-200 mb-3" />
+          <p className="text-gray-400">No users found</p>
+        </div>
+      ) : (
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+          <table className="w-full">
             <thead>
-              <tr className="bg-gray-50 border-b border-gray-100">
-                <th className="px-6 py-4 text-xs font-bold text-gray-400 uppercase tracking-wider">User</th>
-                <th className="px-6 py-4 text-xs font-bold text-gray-400 uppercase tracking-wider">Role</th>
-                <th className="px-6 py-4 text-xs font-bold text-gray-400 uppercase tracking-wider">Status</th>
-                <th className="px-6 py-4 text-xs font-bold text-gray-400 uppercase tracking-wider">Joined</th>
-                <th className="px-6 py-4 text-xs font-bold text-gray-400 uppercase tracking-wider text-right">Actions</th>
+              <tr className="border-b border-gray-100 bg-gray-50">
+                <th className="text-left text-xs font-semibold text-gray-500 px-5 py-3">User</th>
+                <th className="text-left text-xs font-semibold text-gray-500 px-4 py-3 hidden sm:table-cell">Role</th>
+                <th className="text-left text-xs font-semibold text-gray-500 px-4 py-3 hidden md:table-cell">Status</th>
+                <th className="text-right text-xs font-semibold text-gray-500 px-5 py-3">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
-              {filtered.map(user => {
-                const RoleIcon = ROLE_ICONS[user.role] || User;
-                return (
-                  <tr key={user._id || user.id} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 bg-orange-100 rounded-full flex items-center justify-center text-sm font-black text-orange-600">
-                          {user.name?.[0]?.toUpperCase()}
-                        </div>
-                        <div>
-                          <p className="font-extrabold text-gray-900 tracking-tight">{user.name}</p>
-                          <p className="text-xs font-semibold text-gray-400 mt-0.5">{user.phone || 'No phone'}</p>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <span className={`inline-flex items-center gap-1.5 text-[10px] uppercase tracking-wider px-2.5 py-1 rounded-lg font-bold ${ROLE_COLORS[user.role]}`}>
-                        <RoleIcon size={12} />
-                        {user.role.replace('_', ' ')}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex flex-col gap-1">
-                        {user.isBlocked || user.is_blocked ? (
-                          <span className="text-[10px] uppercase tracking-wider font-bold bg-red-100 text-red-700 px-2.5 py-1 rounded-lg w-fit">Blocked</span>
-                        ) : user.isApprovedByAdmin || user.is_approved_by_admin ? (
-                          <span className="text-[10px] uppercase tracking-wider font-bold bg-green-100 text-green-700 px-2.5 py-1 rounded-lg w-fit">Approved</span>
-                        ) : user.role !== 'user' && user.role !== 'admin' ? (
-                          <span className="text-[10px] uppercase tracking-wider font-bold bg-amber-100 text-amber-700 px-2.5 py-1 rounded-lg w-fit">Pending</span>
-                        ) : (
-                          <span className="text-[10px] uppercase tracking-wider font-bold bg-gray-100 text-gray-500 px-2.5 py-1 rounded-lg w-fit">Active</span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 text-xs font-semibold text-gray-400">
-                      {new Date(user.createdAt || user.created_at).toLocaleDateString()}
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex items-center justify-end gap-2">
-                        {!(user.isApprovedByAdmin || user.is_approved_by_admin) && user.role !== 'user' && user.role !== 'admin' && !(user.isBlocked || user.is_blocked) && (
+              {users.map((user) => (
+                <tr key={user._id} className="hover:bg-gray-50/50">
+                  <td className="px-5 py-3.5">
+                    <p className="font-semibold text-sm text-gray-900">{user.name}</p>
+                    <p className="text-xs text-gray-400">{user.email}</p>
+                  </td>
+                  <td className="px-4 py-3.5 hidden sm:table-cell">
+                    <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${ROLE_COLORS[user.role] || 'bg-gray-100 text-gray-600'}`}>
+                      {user.role === 'delivery_boy' ? 'Delivery' : user.role}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3.5 hidden md:table-cell">
+                    <div className="flex gap-1.5 flex-wrap">
+                      {user.isBlocked && <span className="text-xs bg-red-50 text-red-500 px-2 py-0.5 rounded-full">Blocked</span>}
+                      {user.isEmailVerified ? <span className="text-xs bg-green-50 text-green-500 px-2 py-0.5 rounded-full">Email ✓</span> : <span className="text-xs bg-gray-100 text-gray-400 px-2 py-0.5 rounded-full">Email ✗</span>}
+                      {(user.role === 'owner' || user.role === 'delivery_boy') && (
+                        user.isApprovedByAdmin ? <span className="text-xs bg-blue-50 text-blue-500 px-2 py-0.5 rounded-full">Approved</span> : <span className="text-xs bg-amber-50 text-amber-500 px-2 py-0.5 rounded-full">Pending</span>
+                      )}
+                    </div>
+                  </td>
+                  <td className="px-5 py-3.5">
+                    <div className="flex items-center justify-end gap-1.5">
+                      {(user.role === 'owner' || user.role === 'delivery_boy') && !user.isApprovedByAdmin && user.isEmailVerified && (
+                        <>
                           <button
-                            onClick={() => approve(user._id || user.id, user.name)}
-                            disabled={actionLoading === (user._id || user.id) + '_approve'}
-                            className="flex items-center gap-1.5 px-3 py-2 bg-green-50 hover:bg-green-100 text-green-700 rounded-xl text-xs font-bold uppercase tracking-wider transition-colors disabled:opacity-50"
+                            onClick={() => action(user._id, `/admin/users/${user._id}/approve`, 'User approved!')}
+                            disabled={actioning === user._id + `/admin/users/${user._id}/approve`}
+                            className="flex items-center gap-1 p-1.5 rounded-lg bg-green-50 text-green-600 hover:bg-green-100 disabled:opacity-50"
+                            title="Approve KYC"
                           >
-                            <CheckCircle size={14} /> Approve
+                            {actioning === user._id + `/admin/users/${user._id}/approve`
+                              ? <Loader2 className="w-4 h-4 animate-spin" />
+                              : <CheckCircle className="w-4 h-4" />}
                           </button>
-                        )}
-                        {user.role !== 'admin' && (
                           <button
-                            onClick={() => toggleBlock(user._id || user.id, user.name, user.isBlocked || user.is_blocked)}
-                            disabled={actionLoading === (user._id || user.id) + '_block'}
-                            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold uppercase tracking-wider transition-colors disabled:opacity-50 ${
-                              user.isBlocked || user.is_blocked
-                                ? 'bg-blue-50 hover:bg-blue-100 text-blue-700'
-                                : 'bg-red-50 hover:bg-red-100 text-red-600'
-                            }`}
+                            onClick={() => action(user._id, `/admin/users/${user._id}/reject`, 'User rejected')}
+                            disabled={actioning === user._id + `/admin/users/${user._id}/reject`}
+                            className="p-1.5 rounded-lg bg-red-50 text-red-500 hover:bg-red-100 disabled:opacity-50"
+                            title="Reject KYC"
                           >
-                            <Ban size={14} /> {user.isBlocked || user.is_blocked ? 'Unblock' : 'Block'}
+                            <XCircle className="w-4 h-4" />
                           </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
+                        </>
+                      )}
+                      {(user.role === 'owner' || user.role === 'delivery_boy') && user.isApprovedByAdmin && (
+                        <span className="text-xs text-green-600 bg-green-50 px-2.5 py-1 rounded-full font-semibold">Approved</span>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
-          {filtered.length === 0 && (
-            <div className="text-center py-16">
-              <User className="mx-auto h-12 w-12 text-gray-300 mb-3" />
-              <p className="text-gray-400 font-bold uppercase tracking-wider">No users found</p>
-            </div>
-          )}
         </div>
-      </div>
+      )}
+
+      {totalPages > 1 && (
+        <div className="flex items-center justify-center gap-3 mt-6">
+          <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} className="p-2 rounded-xl border border-gray-200 hover:bg-gray-50 disabled:opacity-40"><ChevronLeft className="w-4 h-4" /></button>
+          <span className="text-sm text-gray-600">Page {page} of {totalPages}</span>
+          <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages} className="p-2 rounded-xl border border-gray-200 hover:bg-gray-50 disabled:opacity-40"><ChevronRight className="w-4 h-4" /></button>
+        </div>
+      )}
     </div>
   );
 }

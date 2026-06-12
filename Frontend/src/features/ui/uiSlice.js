@@ -3,28 +3,30 @@ import { createSlice } from '@reduxjs/toolkit';
 const uiSlice = createSlice({
   name: 'ui',
   initialState: {
-    sidebarOpen: false,
-    cartOpen: false,
-    clearCartModal: null, // { item, shopId, shopName }
-    toast: null, // { message, type }
+    toast: null,
+    clearCartModal: { visible: false, pendingItem: null },
   },
   reducers: {
-    toggleSidebar(state) { state.sidebarOpen = !state.sidebarOpen; },
-    setSidebarOpen(state, action) { state.sidebarOpen = action.payload; },
-    toggleCart(state) { state.cartOpen = !state.cartOpen; },
-    setCartOpen(state, action) { state.cartOpen = action.payload; },
-    showClearCartModal(state, action) { state.clearCartModal = action.payload; },
-    hideClearCartModal(state) { state.clearCartModal = null; },
-    showToast(state, action) { state.toast = action.payload; },
-    hideToast(state) { state.toast = null; },
+    showToast: (state, action) => {
+      state.toast = {
+        message: action.payload.message,
+        type: action.payload.type || 'info',
+        duration: action.payload.duration || 3000,
+        id: Date.now(),
+      };
+    },
+    hideToast: (state) => { state.toast = null; },
+    showClearCartModal: (state, action) => {
+      state.clearCartModal = { visible: true, pendingItem: action.payload };
+    },
+    hideClearCartModal: (state) => {
+      state.clearCartModal = { visible: false, pendingItem: null };
+    },
   },
 });
 
-export const {
-  toggleSidebar, setSidebarOpen,
-  toggleCart, setCartOpen,
-  showClearCartModal, hideClearCartModal,
-  showToast, hideToast,
-} = uiSlice.actions;
+export const { showToast, hideToast, showClearCartModal, hideClearCartModal } = uiSlice.actions;
+export const selectToast = (state) => state.ui.toast;
+export const selectClearCartModal = (state) => state.ui.clearCartModal;
 
 export default uiSlice.reducer;

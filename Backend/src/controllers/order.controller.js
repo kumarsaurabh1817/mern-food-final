@@ -458,16 +458,32 @@ export const getOrders = async (req, res, next) => {
     const parsedLimit = Math.min(50, Math.max(1, parseInt(limit))); // cap at 50
     let query = {};
 
-    if (req.user.role === "user") query.customer = req.user.id;
-    else if (req.user.role === "owner") {
-      const shop = await Shop.findOne({ owner: req.user.id });
-      if (shop) query.shop = shop._id;
-    } else if (req.user.role === "delivery_boy")
+    if (req.user.role === "user") {
+      // Customer: only their own orders
+      query.customer = req.user.id;
+    } else if (req.user.role === "owner") {
+      // CRITICAL FIX: scope strictly to the owner's shop.
+      // If the owner has no shop yet, return an empty list immediately —
+      // NEVER allow query={} which would return every order in the database.
+      const shop = await Shop.findOne({ owner: req.user.id }).select("_id");
+      if (!shop) {
+        return res.status(200).json({
+          success: true,
+          orders: [],
+          total: 0,
+          page: parsedPage,
+          totalPages: 0,
+        });
+      }
+      query.shop = shop._id;
+    } else if (req.user.role === "delivery_boy") {
+      // Delivery agent: only orders assigned to them
       query.deliveryAgent = req.user.id;
+    }
+    // admin role: no filter — sees all orders intentionally
 
     if (status) query.status = status;
 
-    // --- FIX #8: Run count and find in parallel for proper pagination ---
     let orderQuery = Order.find(query)
       .populate("shop", "name")
       .populate("customer", "name")

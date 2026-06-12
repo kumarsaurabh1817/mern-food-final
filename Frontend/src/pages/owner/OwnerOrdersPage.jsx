@@ -1,261 +1,136 @@
-import { useState, useEffect } from 'react';
-import { useDispatch } from 'react-redux';
+import { useState, useEffect, useRef } from 'react';
+import { CheckCircle, ChefHat, Package, Clock, RefreshCw, Loader2 } from 'lucide-react';
 import api from '../../lib/axios';
+import { io } from 'socket.io-client';
+import { useDispatch } from 'react-redux';
 import { showToast } from '../../features/ui/uiSlice';
-import { ChefHat, CheckCircle, Bike, Package, X, RefreshCw } from 'lucide-react';
+import { useSelector } from 'react-redux';
+import { selectUser } from '../../features/auth/authSlice';
 
-const STATUS_CLASS = {
-  pending: 'status-pending',
-  confirmed: 'status-confirmed',
-  preparing: 'status-preparing',
-  ready_for_pickup: 'status-ready_for_pickup',
-  out_for_delivery: 'status-out_for_delivery',
-  delivered: 'status-delivered',
-  cancelled: 'status-cancelled',
+const STATUS_META = {
+  pending:   { label: 'Pending', color: 'bg-amber-50 text-amber-600 border-amber-200', action: 'Confirm', next: 'confirm', actionColor: 'bg-blue-500 hover:bg-blue-600' },
+  confirmed: { label: 'Confirmed', color: 'bg-blue-50 text-blue-600 border-blue-200', action: 'Mark Preparing', next: 'preparing', actionColor: 'bg-purple-500 hover:bg-purple-600' },
+  preparing: { label: 'Preparing', color: 'bg-purple-50 text-purple-600 border-purple-200', action: 'Mark Ready', next: 'ready', actionColor: 'bg-cyan-500 hover:bg-cyan-600' },
+  ready_for_pickup: { label: 'Ready for Pickup', color: 'bg-cyan-50 text-cyan-600 border-cyan-200', action: null },
+  out_for_delivery: { label: 'Out for Delivery', color: 'bg-orange-50 text-orange-600 border-orange-200', action: null },
+  delivered: { label: 'Delivered', color: 'bg-green-50 text-green-600 border-green-200', action: null },
+  cancelled: { label: 'Cancelled', color: 'bg-red-50 text-red-600 border-red-200', action: null },
 };
 
-function OrderCard({ order, onUpdate }) {
-  const dispatch = useDispatch();
-  const [accepting, setAccepting] = useState(false);
-  const [prepTime, setPrepTime] = useState(20);
-  const [loading, setLoading] = useState(false);
-
-  const confirmOrder = async () => {
-    setLoading(true);
-    try {
-      await api.patch(`/orders/${order._id || order.id}/confirm`, { preparationTime: prepTime });
-      dispatch(showToast({ message: 'Order confirmed', type: 'success' }));
-      onUpdate();
-    } catch (error) {
-      dispatch(showToast({ message: error.response?.data?.message || 'Error confirming order', type: 'error' }));
-    }
-    setLoading(false);
-  };
-
-  const markPreparing = async () => {
-    setLoading(true);
-    try {
-      await api.patch(`/orders/${order._id || order.id}/preparing`);
-      dispatch(showToast({ message: 'Order is now being prepared!', type: 'success' }));
-      onUpdate();
-    } catch (error) {
-      dispatch(showToast({ message: error.response?.data?.message || 'Error marking as preparing', type: 'error' }));
-    }
-    setLoading(false);
-  };
-
-  const markReady = async () => {
-    setLoading(true);
-    try {
-      await api.patch(`/orders/${order._id || order.id}/ready`);
-      dispatch(showToast({ message: 'Order ready — waiting for delivery agent!', type: 'success' }));
-      onUpdate();
-    } catch (error) {
-      dispatch(showToast({ message: error.response?.data?.message || 'Error marking ready', type: 'error' }));
-    }
-    setLoading(false);
-  };
-
-  const cancel = async () => {
-    if (!window.confirm('Cancel this order?')) return;
-    setLoading(true);
-    try {
-      await api.patch(`/orders/${order._id || order.id}/cancel`);
-      onUpdate();
-    } catch (error) {
-      dispatch(showToast({ message: error.response?.data?.message || 'Error cancelling order', type: 'error' }));
-    }
-    setLoading(false);
-  };
-
-  const isPending = order.status === 'pending';
-
-  return (
-    <div style={{
-      background: '#FFFFFF',
-      border: `1px solid ${isPending ? '#FED7AA' : '#E5E7EB'}`,
-      borderLeft: `4px solid ${isPending ? '#FF7A00' : '#E5E7EB'}`,
-      borderRadius: '16px',
-      padding: '18px',
-      boxShadow: '0 1px 4px rgba(0,0,0,0.05)',
-      transition: 'all 0.2s ease',
-    }}>
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
-        <div>
-          <p style={{ fontSize: '14px', fontWeight: 900, color: '#1A1A1A', margin: 0, fontFamily: 'monospace' }}>
-            #{(order._id || order.id)?.slice(-8).toUpperCase()}
-          </p>
-          <p style={{ fontSize: '11px', color: '#6B7280', margin: '4px 0 0' }}>
-            {new Date(order.createdAt || order.created_at).toLocaleString()}
-          </p>
-        </div>
-        <span className={STATUS_CLASS[order.status] || 'status-pending'}>
-          {(order.status || 'pending').replace(/_/g, ' ')}
-        </span>
-      </div>
-
-      {/* Items */}
-      <div className="owner-card-soft" style={{ marginTop: '14px' }}>
-        {(order.items || order.order_items || []).map(item => (
-          <div key={item._id || item.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', fontSize: '13px' }}>
-            <span style={{ color: '#374151' }}>{item.quantity}× {item.name}</span>
-            <span style={{ fontWeight: 700, color: '#1A1A1A' }}>₹{(item.price * item.quantity).toFixed(0)}</span>
-          </div>
-        ))}
-        <div style={{ borderTop: '1px solid #E5E7EB', marginTop: '8px', paddingTop: '8px', display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
-          <span style={{ color: '#6B7280', fontWeight: 600 }}>Total</span>
-          <span style={{ fontWeight: 800, color: '#1A1A1A' }}>₹{(order.totalAmount || order.total_amount || 0).toFixed(0)}</span>
-        </div>
-      </div>
-
-      {/* Address */}
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', marginTop: '12px', fontSize: '12px', color: '#6B7280' }}>
-        <Package size={12} style={{ marginTop: '2px', flexShrink: 0, color: '#FF7A00' }} />
-        <span>{(order.deliveryAddress || order.delivery_address)?.street}, {(order.deliveryAddress || order.delivery_address)?.city}</span>
-      </div>
-
-      {/* Actions */}
-      <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginTop: '14px' }}>
-        {order.status === 'pending' ? (
-          accepting ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-              <span style={{ fontSize: '12px', color: '#6B7280', fontWeight: 600 }}>Prep time:</span>
-              <input
-                type="number"
-                value={prepTime}
-                onChange={e => setPrepTime(Number(e.target.value))}
-                min={5}
-                max={120}
-                className="input-field owner-input-compact"
-                style={{ width: '56px' }}
-              />
-              <span style={{ fontSize: '12px', color: '#6B7280', fontWeight: 600 }}>mins</span>
-              <button
-                className="btn-primary"
-                style={{ padding: '8px 16px', fontSize: '12px' }}
-                onClick={confirmOrder}
-                disabled={loading}
-              >
-                Confirm
-              </button>
-              <button
-                className="btn-ghost"
-                style={{ padding: '8px 12px', fontSize: '12px' }}
-                onClick={() => setAccepting(false)}
-                disabled={loading}
-              >
-                Cancel
-              </button>
-            </div>
-          ) : (
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <button
-                className="btn-primary"
-                style={{ padding: '9px 18px', fontSize: '12px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
-                onClick={() => setAccepting(true)}
-                disabled={loading}
-              >
-                <CheckCircle size={13} /> Accept
-              </button>
-              <button
-                className="btn-ghost-danger"
-                style={{ padding: '9px 18px', fontSize: '12px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
-                onClick={cancel}
-                disabled={loading}
-              >
-                <X size={13} /> Cancel
-              </button>
-            </div>
-          )
-        ) : null}
-        {order.status === 'confirmed' && (
-          <button onClick={markPreparing} disabled={loading} className="btn-primary"
-            style={{ padding: '9px 16px', fontSize: '12px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-            <ChefHat size={14} /> Start Preparing
-          </button>
-        )}
-        {order.status === 'preparing' && (
-          <button onClick={markReady} disabled={loading} className="btn-primary"
-            style={{ padding: '9px 16px', fontSize: '12px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-            <Bike size={14} /> Mark Ready for Pickup
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
+const FILTER_TABS = ['all', 'pending', 'confirmed', 'preparing', 'ready_for_pickup', 'out_for_delivery', 'delivered'];
 
 export default function OwnerOrdersPage() {
+  const dispatch = useDispatch();
+  const user = useSelector(selectUser);
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState('active');
-  const [refreshing, setRefreshing] = useState(false);
+  const [filter, setFilter] = useState('all');
+  const [actioning, setActioning] = useState(null);
+  const socketRef = useRef(null);
 
-  useEffect(() => { fetchData(); }, []);
+  const fetchOrders = () => {
+    api.get('/orders').then(({ data }) => setOrders(data.orders || data || [])).catch(() => {}).finally(() => setLoading(false));
+  };
 
-  const fetchData = async ({ refresh = false } = {}) => {
-    if (refresh) setRefreshing(true);
+  useEffect(() => {
+    fetchOrders();
+    const socket = io(import.meta.env.VITE_API_URL || 'http://localhost:5000', { withCredentials: true });
+    socketRef.current = socket;
+    socket.emit('joinOwnerRoom');
+    socket.on('newOrder', () => fetchOrders());
+    socket.on('orderStatusUpdated', () => fetchOrders());
+    return () => socket.disconnect();
+  }, []);
+
+  const handleAction = async (order, action) => {
+    setActioning(order._id);
     try {
-      const { data } = await api.get('/orders');
-      if (data.success) setOrders(data.orders || []);
-    } catch (error) {
-      console.error(error);
+      await api.patch(`/orders/${order._id}/${action}`);
+      dispatch(showToast({ message: 'Order updated!', type: 'success' }));
+      fetchOrders();
+    } catch (err) {
+      dispatch(showToast({ message: err.response?.data?.message || 'Action failed', type: 'error' }));
     } finally {
-      setLoading(false);
-      if (refresh) setRefreshing(false);
+      setActioning(null);
     }
   };
 
-  const handleRefresh = () => {
-    fetchData({ refresh: true });
-  };
-
-  const activeStatuses = ['pending', 'confirmed', 'preparing', 'ready_for_pickup', 'out_for_delivery'];
-  const filtered = filter === 'active'
-    ? orders.filter(o => activeStatuses.includes(o.status))
-    : orders.filter(o => o.status === 'delivered' || o.status === 'cancelled');
-
-  if (loading) return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '240px' }}>
-      <div style={{ width: '32px', height: '32px', border: '3px solid #E5E7EB', borderTopColor: '#FF7A00', borderRadius: '50%' }} className="animate-spin" />
-    </div>
-  );
+  const filteredOrders = filter === 'all' ? orders : orders.filter((o) => o.status === filter);
 
   return (
-    <div className="owner-page">
-      <div className="owner-header">
+    <div>
+      <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="owner-title">Orders</h1>
-          <p className="owner-subtitle">Track and action your live queue</p>
+          <h1 className="text-2xl font-black text-gray-900">Orders</h1>
+          <p className="text-gray-400 text-sm">{orders.length} total orders</p>
         </div>
-        <button onClick={handleRefresh} className="btn-ghost" disabled={refreshing}
-          style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '8px 14px' }}>
-          <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} /> Refresh
+        <button onClick={fetchOrders} className="flex items-center gap-2 text-sm text-gray-500 hover:text-gray-700 border border-gray-200 px-3 py-2 rounded-xl hover:bg-gray-50">
+          <RefreshCw className="w-4 h-4" /> Refresh
         </button>
       </div>
 
-      {/* Tabs */}
-      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-        {[{ key: 'active', label: 'Active' }, { key: 'history', label: 'History' }].map(tab => (
-          <button key={tab.key} onClick={() => setFilter(tab.key)}
-            className={`owner-tab ${filter === tab.key ? 'owner-tab-active' : ''}`}>
-            {tab.label}
-            {tab.key === 'active' && filtered.length > 0 && filter === 'active' && (
-              <span className="owner-tab-count">{filtered.length}</span>
+      {/* Status filter */}
+      <div className="flex gap-2 overflow-x-auto scrollbar-hide mb-5">
+        {FILTER_TABS.map((f) => (
+          <button key={f} onClick={() => setFilter(f)}
+            className={`flex-shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold capitalize transition-colors ${filter === f ? 'bg-orange-500 text-white' : 'bg-white border border-gray-200 text-gray-500 hover:border-orange-300'}`}>
+            {f === 'all' ? 'All' : f.replace(/_/g, ' ')}
+            {f !== 'all' && orders.filter((o) => o.status === f).length > 0 && (
+              <span className="ml-1.5 bg-white/20 rounded-full px-1.5">{orders.filter((o) => o.status === f).length}</span>
             )}
           </button>
         ))}
       </div>
 
-      {/* Order list */}
-      {filtered.length === 0 ? (
-        <div className="owner-empty">
-          <Package size={32} style={{ margin: '0 auto 10px', opacity: 0.4 }} />
-          <p style={{ fontWeight: 700 }}>{filter === 'active' ? 'No active orders' : 'No order history'}</p>
+      {loading ? (
+        <div className="space-y-3">{[...Array(3)].map((_, i) => <div key={i} className="bg-white rounded-2xl h-24 animate-pulse" />)}</div>
+      ) : filteredOrders.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-gray-100 p-12 text-center shadow-sm">
+          <Package className="w-12 h-12 mx-auto text-gray-200 mb-3" />
+          <p className="text-gray-400">{filter === 'all' ? 'No orders yet' : `No ${filter.replace(/_/g, ' ')} orders`}</p>
         </div>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-          {filtered.map(order => <OrderCard key={order._id || order.id} order={order} onUpdate={fetchData} />)}
+        <div className="space-y-4">
+          {filteredOrders.map((order) => {
+            const meta = STATUS_META[order.status] || {};
+            return (
+              <div key={order._id} className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm">
+                <div className="flex items-start justify-between gap-4 mb-3">
+                  <div>
+                    <p className="font-bold text-gray-900">Order #{order._id.slice(-6).toUpperCase()}</p>
+                    <p className="text-xs text-gray-400 flex items-center gap-1 mt-0.5">
+                      <Clock className="w-3 h-3" /> {new Date(order.createdAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+                    </p>
+                  </div>
+                  <span className={`text-xs font-semibold px-2.5 py-1 rounded-full border ${meta.color}`}>{meta.label}</span>
+                </div>
+
+                <div className="bg-gray-50 rounded-xl p-3 mb-3">
+                  <p className="text-xs text-gray-500 mb-1.5 font-medium">Items</p>
+                  {order.items?.map((item) => (
+                    <p key={item._id || item.name} className="text-sm text-gray-700">{item.name} × {item.quantity}</p>
+                  ))}
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-xs text-gray-400">Customer: <span className="text-gray-600">{order.customer?.name}</span></p>
+                    <p className="font-bold text-gray-900">₹{order.totalAmount}</p>
+                  </div>
+                  {meta.action && (
+                    <button
+                      onClick={() => handleAction(order, meta.next)}
+                      disabled={actioning === order._id}
+                      className={`flex items-center gap-2 text-white text-sm font-semibold px-4 py-2 rounded-xl transition-colors ${meta.actionColor} disabled:opacity-60`}
+                    >
+                      {actioning === order._id ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
+                      {meta.action}
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

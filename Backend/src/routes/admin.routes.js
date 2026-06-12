@@ -5,7 +5,6 @@ import {
   getUsers,
   approveUser,
   rejectUser,
-  toggleBlockUser,
   getShops,
   approveShop,
   toggleSuspendShop,
@@ -179,7 +178,6 @@ router.patch("/users/:id/reject", rejectUser);
  *       404:
  *         description: User not found
  */
-router.patch("/users/:id/block", toggleBlockUser);
 
 /**
  * @swagger

@@ -1,26 +1,20 @@
-export default function Button({
-  children,
-  variant = 'primary',
-  isLoading = false,
-  disabled = false,
-  className = '',
-  ...props
-}) {
-  const base = 'inline-flex w-full items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF9F43]/50 disabled:cursor-not-allowed disabled:opacity-60';
-  const styles = {
-    primary: 'bg-gradient-to-r from-[#FF7A00] to-[#FF9F43] text-white shadow-[0_12px_30px_rgba(255,122,0,0.25)] hover:shadow-[0_16px_36px_rgba(255,122,0,0.35)] hover:scale-[1.01]',
-    outline: 'border border-slate-200 bg-white text-slate-600 hover:border-orange-300 hover:text-orange-600',
-  };
+import { Loader2 } from 'lucide-react';
 
+const variants = {
+  primary: 'bg-orange-500 hover:bg-orange-600 text-white shadow-sm shadow-orange-200 hover:shadow-orange-300',
+  ghost: 'bg-transparent hover:bg-gray-100 text-gray-700 border border-gray-200',
+  danger: 'bg-red-500 hover:bg-red-600 text-white shadow-sm shadow-red-200',
+  outline: 'bg-transparent border border-orange-500 text-orange-500 hover:bg-orange-50',
+};
+
+export default function Button({ children, variant = 'primary', loading = false, className = '', ...props }) {
   return (
     <button
-      className={`${base} ${styles[variant]} ${className}`}
-      disabled={disabled || isLoading}
+      className={`inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed ${variants[variant]} ${className}`}
+      disabled={loading || props.disabled}
       {...props}
     >
-      {isLoading && (
-        <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/80 border-t-transparent" />
-      )}
+      {loading && <Loader2 className="w-4 h-4 animate-spin" />}
       {children}
     </button>
   );

@@ -1,265 +1,104 @@
-import { Outlet, Link, useNavigate, useLocation } from 'react-router-dom';
+import { useState } from 'react';
+import { Link, Outlet, useNavigate } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
+import { UtensilsCrossed, ShoppingCart, User, Search, ChevronDown, LogOut, Package } from 'lucide-react';
+import { selectUser } from '../features/auth/authSlice';
 import { signOut } from '../features/auth/authSlice';
 import { selectCartCount } from '../features/cart/cartSlice';
-import { Home, ShoppingBag, User, LogOut, ShoppingCart, Zap } from 'lucide-react';
 
 export default function CustomerLayout() {
   const dispatch = useDispatch();
   const navigate = useNavigate();
-  const location = useLocation();
-  const { user } = useSelector(s => s.auth);
+  const user = useSelector(selectUser);
   const cartCount = useSelector(selectCartCount);
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
 
-  const handleSignOut = async () => {
-    await dispatch(signOut());
+  const handleSearch = (e) => {
+    e.preventDefault();
+    if (searchQuery.trim()) navigate(`/restaurants?q=${encodeURIComponent(searchQuery.trim())}`);
+  };
+
+  const handleLogout = () => {
+    dispatch(signOut());
     navigate('/login');
   };
 
-  const navItems = [
-    { to: '/', icon: Home, label: 'Home' },
-    { to: '/orders', icon: ShoppingBag, label: 'Orders' },
-    { to: '/cart', icon: ShoppingCart, label: 'Cart', badge: cartCount },
-    { to: '/profile', icon: User, label: 'Profile' },
-  ];
-
-  const isActive = (path) => location.pathname === path;
-
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg-dark)', fontFamily: "'Plus Jakarta Sans', sans-serif" }}>
+    <div className="min-h-screen bg-gray-50 flex flex-col">
+      <header className="bg-white border-b border-gray-100 sticky top-0 z-40 shadow-sm">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center gap-4">
+          <Link to="/" className="flex items-center gap-2 flex-shrink-0">
+            <div className="w-8 h-8 bg-orange-500 rounded-lg flex items-center justify-center">
+              <UtensilsCrossed className="w-4 h-4 text-white" />
+            </div>
+            <span className="font-black text-orange-500 text-lg hidden sm:block">OrangeBite</span>
+          </Link>
 
-      {/* ─── Top Navbar ─── */}
-      <header style={{
-        position: 'sticky',
-        top: 0,
-        zIndex: 100,
-        background: 'rgba(255,255,255,0.9)',
-        backdropFilter: 'blur(16px)',
-        WebkitBackdropFilter: 'blur(16px)',
-        borderBottom: '1px solid var(--border)',
-      }}>
-        <div style={{ maxWidth: '1280px', margin: '0 auto', padding: '0 24px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: '72px' }}>
+          <form onSubmit={handleSearch} className="flex-1 max-w-lg mx-auto">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search restaurants or cuisines..."
+                className="w-full pl-9 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100 transition-all"
+              />
+            </div>
+          </form>
 
-            {/* Logo */}
-            <Link to="/" style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <div style={{
-                width: '38px', height: '38px',
-                background: 'linear-gradient(135deg, var(--primary), var(--primary-dark))',
-                borderRadius: '12px',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                boxShadow: '0 4px 14px var(--primary-glow)',
-              }}>
-                <Zap size={20} color="var(--bg-dark)" fill="var(--bg-dark)" />
-              </div>
-              <span className="text-gradient-orange" style={{
-                fontSize: '22px', fontWeight: 800, letterSpacing: '-0.03em',
-              }}>
-                Orange Bite
-              </span>
+          <div className="flex items-center gap-2 ml-auto flex-shrink-0">
+            <Link to="/cart" className="relative p-2 rounded-xl hover:bg-orange-50 transition-colors">
+              <ShoppingCart className="w-5 h-5 text-gray-600" />
+              {cartCount > 0 && (
+                <span className="absolute -top-1 -right-1 w-5 h-5 bg-orange-500 text-white text-xs font-bold rounded-full flex items-center justify-center">
+                  {cartCount > 9 ? '9+' : cartCount}
+                </span>
+              )}
             </Link>
 
-            {/* Desktop Nav */}
-            <nav style={{ display: 'flex', alignItems: 'center', gap: '8px' }} className="hidden-mobile">
-              {navItems.map(item => (
-                <Link
-                  key={item.to}
-                  to={item.to}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: '7px',
-                    padding: '9px 16px', borderRadius: '12px',
-                    textDecoration: 'none', position: 'relative',
-                    background: isActive(item.to) ? 'var(--primary-glow)' : 'transparent',
-                    color: isActive(item.to) ? 'var(--primary)' : 'var(--text-secondary)',
-                    fontWeight: 700, fontSize: '14px',
-                    transition: 'all 0.2s ease',
-                  }}
-                >
-                  <span style={{ position: 'relative', display: 'inline-flex' }}>
-                    <item.icon size={17} />
-                    {item.to === '/cart' && cartCount > 0 && (
-                      <span
-                        style={{
-                          position: 'absolute',
-                          right: '-2px',
-                          bottom: '-2px',
-                          width: '7px',
-                          height: '7px',
-                          borderRadius: '50%',
-                          background: 'var(--primary)',
-                          border: '2px solid var(--bg-card)',
-                        }}
-                        className="animate-pulse-green"
-                      />
-                    )}
-                  </span>
-                  {item.label}
-                  {item.badge > 0 && (
-                    <span style={{
-                      position: 'absolute', top: '4px', right: '4px',
-                      width: '18px', height: '18px',
-                      background: 'var(--primary)', color: '#FFFFFF',
-                      fontSize: '10px', fontWeight: 800,
-                      borderRadius: '50%', display: 'flex',
-                      alignItems: 'center', justifyContent: 'center',
-                    }}
-                      className={cartCount > 0 ? 'animate-pulse-green' : ''}
-                    >
-                      {item.badge}
-                    </span>
-                  )}
-                </Link>
-              ))}
-
+            <div className="relative">
               <button
-                onClick={handleSignOut}
-                style={{
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  width: '34px', height: '34px',
-                  background: 'transparent', border: '1px solid var(--border)',
-                  borderRadius: '10px', cursor: 'pointer',
-                  color: 'var(--text-muted)', transition: 'all 0.2s ease',
-                }}
-                title="Sign Out"
-                onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-surface)'; e.currentTarget.style.borderColor = 'var(--error)'; e.currentTarget.style.color = 'var(--error)'; }}
-                onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-muted)'; }}
+                onClick={() => setDropdownOpen(!dropdownOpen)}
+                className="flex items-center gap-2 px-3 py-2 rounded-xl hover:bg-gray-50 transition-colors"
               >
-                <LogOut size={15} />
+                <div className="w-7 h-7 bg-orange-100 rounded-full flex items-center justify-center">
+                  <User className="w-4 h-4 text-orange-600" />
+                </div>
+                <span className="text-sm font-medium text-gray-700 hidden sm:block max-w-24 truncate">{user?.name || 'Account'}</span>
+                <ChevronDown className="w-4 h-4 text-gray-400 hidden sm:block" />
               </button>
-            </nav>
+              {dropdownOpen && (
+                <div className="absolute right-0 top-full mt-2 w-52 bg-white rounded-xl shadow-lg border border-gray-100 py-2 z-50">
+                  <Link to="/profile" onClick={() => setDropdownOpen(false)} className="flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50">
+                    <User className="w-4 h-4" /> My Profile
+                  </Link>
+                  <Link to="/orders" onClick={() => setDropdownOpen(false)} className="flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50">
+                    <Package className="w-4 h-4" /> My Orders
+                  </Link>
+                  <hr className="my-1 border-gray-100" />
+                  <button onClick={handleLogout} className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-red-600 hover:bg-red-50">
+                    <LogOut className="w-4 h-4" /> Logout
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </header>
 
-      {/* ─── Main Content ─── */}
-      <main style={{ width: '100%', paddingBottom: '80px' }}>
+      {dropdownOpen && <div className="fixed inset-0 z-30" onClick={() => setDropdownOpen(false)} />}
+
+      <main className="flex-1">
         <Outlet />
       </main>
 
-      {/* ─── Mobile Cart FAB ─── */}
-      {cartCount > 0 && (
-      <Link
-          to="/cart"
-          className="cart-fab"
-          style={{
-            position: 'fixed',
-            zIndex: 60,
-            width: '52px',
-            height: '52px',
-            borderRadius: '16px',
-            background: 'linear-gradient(135deg, var(--primary), var(--primary-dark))',
-            color: '#FFFFFF',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            textDecoration: 'none',
-            boxShadow: '0 6px 20px rgba(255,122,0,0.45)',
-            transition: 'all 0.2s ease',
-          }}
-          aria-label="Open cart"
-          onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-3px)'; e.currentTarget.style.boxShadow = '0 10px 28px rgba(255,122,0,0.55)'; }}
-          onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = '0 6px 20px rgba(255,122,0,0.45)'; }}
-        >
-          <ShoppingCart size={22} />
-          <span
-            style={{
-              position: 'absolute',
-              top: '-8px',
-              right: '-8px',
-              width: '22px',
-              height: '22px',
-              borderRadius: '8px',
-              background: '#fff',
-              border: '2px solid var(--primary)',
-              color: 'var(--primary)',
-              fontSize: '11px',
-              fontWeight: 900,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-          >
-            {cartCount}
-          </span>
-        </Link>
-      )}
-
-      {/* ─── Mobile Bottom Nav ─── */}
-      <nav style={{
-        position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 50,
-        background: 'rgba(255,255,255,0.96)',
-        backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)',
-        borderTop: '1px solid var(--border)',
-      }} className="mobile-bottom-nav">
-        <div style={{ display: 'flex', justifyContent: 'space-around', alignItems: 'center', height: '64px' }}>
-          {navItems.map(item => (
-            <Link
-              key={item.to}
-              to={item.to}
-              style={{
-                display: 'flex', flexDirection: 'column', alignItems: 'center',
-                gap: '4px', flex: 1, height: '100%', justifyContent: 'center',
-                textDecoration: 'none', position: 'relative',
-                color: isActive(item.to) ? 'var(--primary)' : 'var(--text-muted)',
-                transition: 'all 0.2s ease',
-              }}
-            >
-              <item.icon size={22} />
-              <span style={{ fontSize: '10px', fontWeight: 700 }}>{item.label}</span>
-              {isActive(item.to) && (
-                <span style={{
-                  position: 'absolute', bottom: '6px',
-                  width: '4px', height: '4px',
-                  background: 'var(--primary)', borderRadius: '50%',
-                }} />
-              )}
-              {item.badge > 0 && (
-                <span style={{
-                  position: 'absolute', top: '8px', right: 'calc(50% - 18px)',
-                  width: '16px', height: '16px',
-                  background: 'var(--primary)', color: '#FFFFFF',
-                  fontSize: '9px', fontWeight: 800,
-                  borderRadius: '50%', display: 'flex',
-                  alignItems: 'center', justifyContent: 'center',
-                }}>
-                  {item.badge}
-                </span>
-              )}
-            </Link>
-          ))}
-          <button
-            onClick={handleSignOut}
-            style={{
-              display: 'flex', flexDirection: 'column', alignItems: 'center',
-              gap: '4px', flex: 1, height: '100%', justifyContent: 'center',
-              background: 'transparent', border: 'none', cursor: 'pointer',
-              color: 'var(--text-muted)',
-            }}
-          >
-            <LogOut size={22} />
-            <span style={{ fontSize: '10px', fontWeight: 700 }}>Logout</span>
-          </button>
+      <footer className="bg-white border-t border-gray-100 py-8 mt-auto">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 text-center text-sm text-gray-400">
+          © 2026 OrangeBite. All rights reserved.
         </div>
-      </nav>
-
-      <style>{`
-        @media (min-width: 640px) {
-          .hidden-mobile { display: flex !important; }
-          .mobile-bottom-nav { display: none !important; }
-          .cart-fab {
-            bottom: 32px !important;
-            right: 32px !important;
-          }
-        }
-        @media (max-width: 639px) {
-          .hidden-mobile { display: none !important; }
-          .mobile-bottom-nav { display: block !important; }
-          .cart-fab {
-            bottom: calc(64px + 24px) !important;
-            right: 24px !important;
-          }
-        }
-      `}</style>
+      </footer>
     </div>
   );
 }

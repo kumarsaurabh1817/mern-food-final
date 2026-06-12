@@ -1,265 +1,202 @@
 import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
-import { useDispatch } from 'react-redux';
+import { Plus, Edit2, Trash2, ToggleLeft, ToggleRight, X, Check, Loader2, Leaf } from 'lucide-react';
 import api from '../../lib/axios';
+import { useDispatch } from 'react-redux';
 import { showToast } from '../../features/ui/uiSlice';
-import { Plus, Pencil, Trash2, Loader, UtensilsCrossed, X, Store } from 'lucide-react';
 
-const CATEGORIES = ['Starters', 'Main Course', 'Breads', 'Rice', 'Beverages', 'Desserts', 'Extras'];
-const FOOD_IMG = 'https://images.pexels.com/photos/1640777/pexels-photo-1640777.jpeg?auto=compress&cs=tinysrgb&w=200';
-const emptyForm = { name: '', description: '', price: '', category: 'Main Course', isVeg: true, isAvailable: true, image: '' };
-
-function MenuItemForm({ form, setForm, onSave, onCancel, saving }) {
-  return (
-    <div className="owner-modal">
-      <div className="owner-card owner-modal-card">
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
-          <h3 style={{ fontSize: '16px', fontWeight: 800, color: '#1A1A1A', margin: 0 }}>
-            {form._id || form.id ? 'Edit Item' : 'Add Menu Item'}
-          </h3>
-          <button onClick={onCancel} className="owner-icon-btn"><X size={16} /></button>
-        </div>
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-          <div>
-            <label style={{ fontSize: '12px', fontWeight: 700, color: '#374151', marginBottom: '6px', display: 'block' }}>Name *</label>
-            <input required value={form.name}
-              onChange={e => setForm(p => ({ ...p, name: e.target.value }))}
-              className="input-field" placeholder="Butter Chicken" />
-          </div>
-          <div>
-            <label style={{ fontSize: '12px', fontWeight: 700, color: '#374151', marginBottom: '6px', display: 'block' }}>Description</label>
-            <textarea value={form.description}
-              onChange={e => setForm(p => ({ ...p, description: e.target.value }))}
-              className="input-field" rows={2} style={{ resize: 'none' }} />
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-            <div>
-              <label style={{ fontSize: '12px', fontWeight: 700, color: '#374151', marginBottom: '6px', display: 'block' }}>Price (₹) *</label>
-              <input type="number" required min={0} value={form.price}
-                onChange={e => setForm(p => ({ ...p, price: e.target.value }))}
-                className="input-field" />
-            </div>
-            <div>
-              <label style={{ fontSize: '12px', fontWeight: 700, color: '#374151', marginBottom: '6px', display: 'block' }}>Category</label>
-              <select value={form.category}
-                onChange={e => setForm(p => ({ ...p, category: e.target.value }))}
-                className="input-field">
-                {CATEGORIES.map(c => <option key={c}>{c}</option>)}
-              </select>
-            </div>
-          </div>
-          <div>
-            <label style={{ fontSize: '12px', fontWeight: 700, color: '#374151', marginBottom: '6px', display: 'block' }}>Image URL (optional)</label>
-            <input value={form.image}
-              onChange={e => setForm(p => ({ ...p, image: e.target.value }))}
-              className="input-field" placeholder="https://..." />
-          </div>
-          <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13px', color: '#374151', fontWeight: 600 }}>
-              <input type="checkbox" checked={form.isVeg}
-                onChange={e => setForm(p => ({ ...p, isVeg: e.target.checked }))} />
-              Vegetarian
-              <span style={{ width: '14px', height: '14px', border: `2px solid ${form.isVeg ? '#22C55E' : '#D1D5DB'}`, borderRadius: '4px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
-                <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: form.isVeg ? '#22C55E' : 'transparent' }} />
-              </span>
-            </label>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13px', color: '#374151', fontWeight: 600 }}>
-              <input type="checkbox" checked={form.isAvailable}
-                onChange={e => setForm(p => ({ ...p, isAvailable: e.target.checked }))} />
-              Available
-            </label>
-          </div>
-        </div>
-
-        <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
-          <button onClick={onCancel} className="btn-ghost" style={{ flex: 1, padding: '11px 14px' }}>Cancel</button>
-          <button onClick={onSave} disabled={saving || !form.name || !form.price}
-            className="btn-primary" style={{ flex: 1, padding: '11px 14px' }}>
-            {saving ? <Loader size={14} className="animate-spin" /> : 'Save Item'}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
+const emptyItem = { name: '', description: '', price: '', category: '', image: '', isVeg: true, isAvailable: true };
 
 export default function MenuPage() {
   const dispatch = useDispatch();
   const [shop, setShop] = useState(null);
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState(emptyForm);
+  const [modal, setModal] = useState(null);
+  const [form, setForm] = useState(emptyItem);
   const [saving, setSaving] = useState(false);
+  const [activeCategory, setActiveCategory] = useState('All');
 
-  useEffect(() => { fetchData(); }, []);
-
-  const fetchData = async () => {
-    try {
-      const { data } = await api.get('/shops/owner/me');
-      if (data.success && data.shop) {
-        setShop(data.shop);
-        setItems(data.shop.menu || []);
+  useEffect(() => {
+    api.get('/shops/owner/me').then(({ data }) => {
+      // /shops/owner/me uses the same aggregation pipeline as /shops/:id
+      // so it already returns shop.menu embedded — no second request needed
+      const s = data.shop || data;
+      if (s?._id) {
+        setShop(s);
+        setItems(s.menu || []);
       }
-    } catch (error) {
-      console.error(error);
-    } finally {
-      setLoading(false);
-    }
-  };
+    }).catch(() => {}).finally(() => setLoading(false));
+  }, []);
 
-  const handleSave = async () => {
-    if (!form.name || !form.price) return;
+  const categories = ['All', ...new Set(items.map((i) => i.category).filter(Boolean))];
+  const filtered = activeCategory === 'All' ? items : items.filter((i) => i.category === activeCategory);
+
+  const openAdd = () => { setForm(emptyItem); setModal('add'); };
+  const openEdit = (item) => { setForm({ ...item, price: String(item.price) }); setModal('edit'); };
+
+  const handleSave = async (e) => {
+    e.preventDefault();
+    if (!shop?._id) return;
     setSaving(true);
     try {
-      if (form._id || form.id) {
-        const { data } = await api.patch(`/shops/${shop._id || shop.id}/menu/${form._id || form.id}`, { ...form, price: +form.price });
-        if (data.success) { dispatch(showToast({ message: 'Item updated', type: 'success' })); fetchData(); setShowForm(false); }
-        else dispatch(showToast({ message: data.message || 'Error updating item', type: 'error' }));
+      const payload = { ...form, price: Number(form.price) };
+      if (modal === 'edit' && form._id) {
+        const { data } = await api.patch(`/shops/${shop._id}/menu/${form._id}`, payload);
+        // Backend returns { menuItems: [...] } — full updated list
+        setItems(data.menuItems || items);
       } else {
-        const { data } = await api.post(`/shops/${shop._id || shop.id}/menu`, { ...form, price: +form.price });
-        if (data.success) { dispatch(showToast({ message: 'Item added', type: 'success' })); fetchData(); setShowForm(false); }
-        else dispatch(showToast({ message: data.message || 'Error adding item', type: 'error' }));
+        const { data } = await api.post(`/shops/${shop._id}/menu`, payload);
+        // Backend returns { menuItems: [...] } — full updated list
+        setItems(data.menuItems || items);
       }
-    } catch (error) {
-      dispatch(showToast({ message: error.response?.data?.message || 'Error saving item', type: 'error' }));
+      setModal(null);
+      dispatch(showToast({ message: `Item ${modal === 'edit' ? 'updated' : 'added'}!`, type: 'success' }));
+    } catch (err) {
+      dispatch(showToast({ message: err.response?.data?.message || 'Failed to save item', type: 'error' }));
     } finally {
       setSaving(false);
     }
   };
 
-  const handleToggleAvail = async (item) => {
+  const handleDelete = async (itemId) => {
+    if (!shop?._id || !confirm('Delete this item?')) return;
     try {
-      await api.patch(`/shops/${shop._id || shop.id}/menu/${item._id || item.id}/toggle-stock`);
-      fetchData();
-    } catch (error) {
-      dispatch(showToast({ message: error.response?.data?.message || 'Error toggling availability', type: 'error' }));
+      const { data } = await api.delete(`/shops/${shop._id}/menu/${itemId}`);
+      // Backend returns { menuItems: [...] } — full updated list
+      setItems(data.menuItems || items.filter((i) => i._id !== itemId));
+      dispatch(showToast({ message: 'Item deleted', type: 'info' }));
+    } catch (err) {
+      dispatch(showToast({ message: 'Failed to delete item', type: 'error' }));
     }
   };
 
-  const handleDelete = async (id) => {
-    if (!confirm('Delete this item?')) return;
+  const toggleStock = async (item) => {
+    if (!shop?._id) return;
     try {
-      await api.delete(`/shops/${shop._id || shop.id}/menu/${id}`);
-      dispatch(showToast({ message: 'Item deleted', type: 'success' }));
-      fetchData();
-    } catch (error) {
-      dispatch(showToast({ message: error.response?.data?.message || 'Error deleting item', type: 'error' }));
+      const { data } = await api.patch(`/shops/${shop._id}/menu/${item._id}/toggle-stock`);
+      setItems((prev) => prev.map((i) => i._id === item._id ? { ...i, isAvailable: data.isAvailable ?? !i.isAvailable } : i));
+    } catch (err) {
+      dispatch(showToast({ message: 'Failed to toggle stock', type: 'error' }));
     }
   };
 
-  if (loading) return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '240px' }}>
-      <div style={{ width: '32px', height: '32px', border: '3px solid #E5E7EB', borderTopColor: '#FF7A00', borderRadius: '50%' }} className="animate-spin" />
-    </div>
-  );
+  if (loading) return <div className="space-y-3">{[...Array(4)].map((_, i) => <div key={i} className="bg-white rounded-2xl h-16 animate-pulse" />)}</div>;
 
-  if (!shop) {
+  if (!shop?._id) {
     return (
-      <div className="owner-page">
-        <div className="owner-header">
-          <div>
-            <h1 className="owner-title">Menu</h1>
-            <p className="owner-subtitle">Create your shop to start adding menu items</p>
-          </div>
-        </div>
-        <div className="owner-card owner-empty">
-          <div style={{
-            width: '64px', height: '64px', borderRadius: '16px',
-            background: 'linear-gradient(135deg, #FFF7ED, #FFE8D6)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            margin: '0 auto 12px',
-            border: '1px solid #FED7AA',
-          }}>
-            <Store size={26} color="#FF7A00" />
-          </div>
-          <p style={{ fontWeight: 800, color: '#1A1A1A', marginBottom: '6px' }}>No shop found</p>
-          <p style={{ fontSize: '13px', color: '#6B7280', marginBottom: '16px' }}>
-            Set up your restaurant to unlock menu management and start selling.
-          </p>
-          <Link
-            to="/owner/shop"
-            className="btn-primary"
-            style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '10px 18px' }}
-          >
-            Create Shop
-          </Link>
-        </div>
+      <div className="bg-amber-50 border border-amber-200 rounded-2xl p-8 text-center">
+        <p className="text-amber-700 font-semibold">Please set up your shop first before adding menu items.</p>
       </div>
     );
   }
 
-  const grouped = items.reduce((acc, item) => {
-    (acc[item.category] = acc[item.category] || []).push(item);
-    return acc;
-  }, {});
-
   return (
-    <div className="owner-page">
-      {showForm && (
-        <MenuItemForm form={form} setForm={setForm} onSave={handleSave}
-          onCancel={() => { setShowForm(false); setForm(emptyForm); }} saving={saving} />
-      )}
-
-      <div className="owner-header">
+    <div>
+      <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="owner-title">Menu</h1>
-          <p className="owner-subtitle">{items.length} items across {Object.keys(grouped).length} categories</p>
+          <h1 className="text-2xl font-black text-gray-900">Menu</h1>
+          <p className="text-gray-400 text-sm">{items.filter((i) => !i.isDeleted).length} items</p>
         </div>
-        <button onClick={() => { setForm(emptyForm); setShowForm(true); }}
-          className="btn-primary"
-          style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '10px 18px' }}>
-          <Plus size={15} /> Add Item
+        <button onClick={openAdd} className="flex items-center gap-2 bg-orange-500 text-white px-4 py-2 rounded-xl text-sm font-semibold hover:bg-orange-600 transition-colors">
+          <Plus className="w-4 h-4" /> Add item
         </button>
       </div>
 
-      {items.length === 0 ? (
-        <div className="owner-card owner-empty">
-          <div style={{ width: '56px', height: '56px', borderRadius: '50%', background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px' }}>
-            <UtensilsCrossed size={24} color="#FF7A00" />
-          </div>
-          <p style={{ fontWeight: 700, color: '#1A1A1A', marginBottom: '4px' }}>No menu items yet</p>
-          <p style={{ fontSize: '13px', color: '#6B7280' }}>Add your first item to get started</p>
+      {/* Category filter */}
+      {categories.length > 1 && (
+        <div className="flex gap-2 overflow-x-auto scrollbar-hide mb-5">
+          {categories.map((cat) => (
+            <button key={cat} onClick={() => setActiveCategory(cat)}
+              className={`flex-shrink-0 px-4 py-1.5 rounded-full text-sm font-medium ${activeCategory === cat ? 'bg-orange-500 text-white' : 'bg-white border border-gray-200 text-gray-600 hover:border-orange-300'}`}>
+              {cat}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {filtered.filter((i) => !i.isDeleted).length === 0 ? (
+        <div className="bg-white rounded-2xl border border-dashed border-gray-200 p-12 text-center">
+          <p className="text-gray-400 mb-4">No items yet. Add your first menu item!</p>
+          <button onClick={openAdd} className="bg-orange-500 text-white px-5 py-2 rounded-xl text-sm font-semibold hover:bg-orange-600">Add item</button>
         </div>
       ) : (
-        Object.entries(grouped).map(([cat, catItems]) => (
-          <div key={cat}>
-            <p style={{ fontSize: '11px', fontWeight: 800, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 10px' }}>{cat}</p>
-            <div className="owner-list">
-              {catItems.map(item => (
-                <div key={item._id || item.id} className="owner-list-item" style={{ opacity: item.isAvailable ? 1 : 0.55 }}>
-                  <img src={item.image || FOOD_IMG} alt={item.name}
-                    style={{ width: '54px', height: '54px', borderRadius: '12px', objectFit: 'cover', flexShrink: 0, border: '1px solid #E5E7EB' }}
-                    onError={e => { e.target.src = FOOD_IMG; }} />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '3px' }}>
-                      {/* Veg/Non-veg indicator */}
-                      <span style={{ width: '14px', height: '14px', border: `2px solid ${item.isVeg ? '#22C55E' : '#EF4444'}`, borderRadius: '3px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                        <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: item.isVeg ? '#22C55E' : '#EF4444' }} />
-                      </span>
-                      <p style={{ fontSize: '13px', fontWeight: 700, color: '#1A1A1A', margin: 0 }}>{item.name}</p>
-                    </div>
-                    <p style={{ fontSize: '13px', fontWeight: 800, color: '#FF7A00', margin: 0 }}>₹{item.price}</p>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <button onClick={() => handleToggleAvail(item)}
-                      className={`owner-chip ${item.isAvailable ? 'owner-chip-success' : 'owner-chip-danger'}`}
-                      style={{ cursor: 'pointer' }}>
-                      {item.isAvailable ? 'In Stock' : 'Out'}
-                    </button>
-                    <button onClick={() => { setForm({ ...item }); setShowForm(true); }} className="owner-icon-btn">
-                      <Pencil size={14} />
-                    </button>
-                    <button onClick={() => handleDelete(item._id || item.id)} className="owner-icon-btn owner-icon-btn-danger">
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
+        <div className="space-y-3">
+          {filtered.filter((i) => !i.isDeleted).map((item) => (
+            <div key={item._id} className={`bg-white rounded-2xl border border-gray-100 p-4 flex items-center gap-4 shadow-sm ${!item.isAvailable ? 'opacity-60' : ''}`}>
+              {item.image && <img src={item.image} alt={item.name} className="w-16 h-16 rounded-xl object-cover flex-shrink-0" />}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className={`w-3.5 h-3.5 border-2 rounded-sm flex-shrink-0 ${item.isVeg ? 'border-green-500' : 'border-red-500'}`} />
+                  <h3 className="font-semibold text-gray-900 truncate">{item.name}</h3>
+                  {!item.isAvailable && <span className="text-xs bg-red-50 text-red-500 px-2 py-0.5 rounded-full">Out of stock</span>}
                 </div>
-              ))}
+                {item.category && <p className="text-xs text-gray-400 mt-0.5">{item.category}</p>}
+                <p className="text-orange-500 font-bold mt-1">₹{item.price}</p>
+              </div>
+              <div className="flex items-center gap-1.5 flex-shrink-0">
+                <button onClick={() => toggleStock(item)} title="Toggle availability"
+                  className={`p-2 rounded-xl transition-colors ${item.isAvailable ? 'text-green-500 hover:bg-green-50' : 'text-gray-400 hover:bg-gray-50'}`}>
+                  {item.isAvailable ? <ToggleRight className="w-5 h-5" /> : <ToggleLeft className="w-5 h-5" />}
+                </button>
+                <button onClick={() => openEdit(item)} className="p-2 rounded-xl hover:bg-gray-50 text-gray-400"><Edit2 className="w-4 h-4" /></button>
+                <button onClick={() => handleDelete(item._id)} className="p-2 rounded-xl hover:bg-red-50 text-gray-400 hover:text-red-500"><Trash2 className="w-4 h-4" /></button>
+              </div>
             </div>
+          ))}
+        </div>
+      )}
+
+      {/* Modal */}
+      {modal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between p-5 border-b border-gray-100">
+              <h3 className="font-bold text-gray-900">{modal === 'edit' ? 'Edit Item' : 'Add Item'}</h3>
+              <button onClick={() => setModal(null)} className="p-2 rounded-xl hover:bg-gray-50 text-gray-400"><X className="w-4 h-4" /></button>
+            </div>
+            <form onSubmit={handleSave} className="p-5 space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="col-span-2">
+                  <label className="text-sm font-medium text-gray-700 block mb-1.5">Name *</label>
+                  <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required placeholder="e.g. Chicken Biryani" className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-orange-400" />
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-gray-700 block mb-1.5">Price (₹) *</label>
+                  <input type="number" min="0" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} required placeholder="199" className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-orange-400" />
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-gray-700 block mb-1.5">Category</label>
+                  <input value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} placeholder="e.g. Main Course" className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-orange-400" />
+                </div>
+                <div className="col-span-2">
+                  <label className="text-sm font-medium text-gray-700 block mb-1.5">Description</label>
+                  <textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={2} placeholder="Brief description..." className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-orange-400 resize-none" />
+                </div>
+                <div className="col-span-2">
+                  <label className="text-sm font-medium text-gray-700 block mb-1.5">Image URL</label>
+                  <input value={form.image} onChange={(e) => setForm({ ...form, image: e.target.value })} placeholder="https://..." className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-orange-400" />
+                </div>
+              </div>
+              <div className="flex gap-4">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={form.isVeg} onChange={(e) => setForm({ ...form, isVeg: e.target.checked })} className="accent-green-500 w-4 h-4" />
+                  <span className="text-sm font-medium text-gray-700 flex items-center gap-1"><Leaf className="w-4 h-4 text-green-500" /> Vegetarian</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={form.isAvailable} onChange={(e) => setForm({ ...form, isAvailable: e.target.checked })} className="accent-orange-500 w-4 h-4" />
+                  <span className="text-sm font-medium text-gray-700">In stock</span>
+                </label>
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button type="submit" disabled={saving} className="flex-1 bg-orange-500 hover:bg-orange-600 text-white font-semibold py-2.5 rounded-xl text-sm transition-colors flex items-center justify-center gap-2 disabled:opacity-60">
+                  {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                  {modal === 'edit' ? 'Update' : 'Add item'}
+                </button>
+                <button type="button" onClick={() => setModal(null)} className="px-5 py-2.5 border border-gray-200 text-gray-600 font-semibold rounded-xl text-sm hover:bg-gray-50">Cancel</button>
+              </div>
+            </form>
           </div>
-        ))
+        </div>
       )}
     </div>
   );

@@ -1,142 +1,185 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
+import { TrendingUp, Users, Store, ShoppingBag, DollarSign, Clock, BarChart2, AlertCircle, ArrowUpRight } from 'lucide-react';
 import api from '../../lib/axios';
-import { Users, Store, ArrowRight, Clock, Activity, ShoppingBag } from 'lucide-react';
 
 export default function AdminDashboard() {
-  const [stats, setStats] = useState({ users: 0, shops: 0, orders: 0, revenue: 0, pending: 0 });
-  const [recentOrders, setRecentOrders] = useState([]);
+  const [kpis, setKpis] = useState(null);
+  const [revenue, setRevenue] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetchStats();
+    Promise.all([
+      api.get('/admin/dashboard'),
+      api.get('/admin/revenue'),
+    ]).then(([kpiRes, revRes]) => {
+      // Backend returns { success, data: { gmv, totalOrders, activeUsers, totalCommission, pendingApprovals, totalShops } }
+      setKpis(kpiRes.data.data || kpiRes.data);
+      setRevenue(revRes.data.data || revRes.data);
+    }).catch(() => {}).finally(() => setLoading(false));
   }, []);
 
-  const fetchStats = async () => {
-    try {
-      const [dashRes, usersRes, shopsRes, ordersRes] = await Promise.all([
-        api.get('/admin/dashboard'),
-        api.get('/admin/users?isApprovedByAdmin=false'),
-        api.get('/admin/shops'),
-        api.get('/orders?limit=5')
-      ]);
+  const kpiCards = kpis ? [
+    {
+      label: 'Total GMV',
+      value: `₹${(kpis.gmv || 0).toLocaleString('en-IN')}`,
+      icon: DollarSign,
+      color: 'text-green-600',
+      bg: 'bg-green-50',
+      border: 'border-green-100',
+    },
+    {
+      label: 'Total Orders',
+      value: (kpis.totalOrders || 0).toLocaleString('en-IN'),
+      icon: ShoppingBag,
+      color: 'text-blue-600',
+      bg: 'bg-blue-50',
+      border: 'border-blue-100',
+    },
+    {
+      label: 'Active Users',
+      value: (kpis.activeUsers || 0).toLocaleString('en-IN'),
+      icon: Users,
+      color: 'text-orange-600',
+      bg: 'bg-orange-50',
+      border: 'border-orange-100',
+    },
+    {
+      label: 'Total Shops',
+      value: (kpis.totalShops || 0).toLocaleString('en-IN'),
+      icon: Store,
+      color: 'text-purple-600',
+      bg: 'bg-purple-50',
+      border: 'border-purple-100',
+    },
+    {
+      label: 'Commission Earned',
+      value: `₹${(kpis.totalCommission || 0).toLocaleString('en-IN')}`,
+      icon: TrendingUp,
+      color: 'text-cyan-600',
+      bg: 'bg-cyan-50',
+      border: 'border-cyan-100',
+    },
+    {
+      label: 'Pending Approvals',
+      value: kpis.pendingApprovals || 0,
+      icon: Clock,
+      color: 'text-amber-600',
+      bg: 'bg-amber-50',
+      border: 'border-amber-100',
+      alert: kpis.pendingApprovals > 0,
+    },
+  ] : [];
 
-      setStats({
-        users: dashRes.data?.data?.activeUsers || 0,
-        shops: shopsRes.data?.total || 0,
-        orders: dashRes.data?.data?.totalOrders || 0,
-        revenue: dashRes.data?.data?.totalCommission || 0,
-        pending: usersRes.data?.total || 0,
-      });
-
-      setRecentOrders(ordersRes.data?.orders || []);
-    } catch (error) {
-      console.error(error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const cards = [
-    { label: 'Total Users', value: stats.users, icon: Users, color: 'text-blue-500', bg: 'bg-blue-50', link: '/admin/users' },
-    { label: 'Restaurants', value: stats.shops, icon: Store, color: 'text-orange-500', bg: 'bg-orange-50', link: '/admin/shops' },
-    { label: 'Pending Approvals', value: stats.pending, icon: Clock, color: 'text-amber-500', bg: 'bg-amber-50', link: '/admin/users' },
-  ];
-
-  const STATUS_COLORS = {
-    pending: 'bg-amber-100 text-amber-700',
-    confirmed: 'bg-blue-100 text-blue-700',
-    preparing: 'bg-orange-100 text-orange-700',
-    ready_for_pickup: 'bg-violet-100 text-violet-700',
-    out_for_delivery: 'bg-teal-100 text-teal-700',
-    delivered: 'bg-green-100 text-green-700',
-    cancelled: 'bg-red-100 text-red-700',
-  };
-
-  if (loading) return <div className="flex items-center justify-center h-64"><div className="w-8 h-8 border-4 border-orange-500 border-t-transparent rounded-full animate-spin" /></div>;
+  if (loading) {
+    return (
+      <div>
+        <div className="mb-6">
+          <div className="h-8 w-48 bg-gray-100 rounded-xl animate-pulse mb-2" />
+          <div className="h-4 w-64 bg-gray-100 rounded-xl animate-pulse" />
+        </div>
+        <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+          {[...Array(6)].map((_, i) => (
+            <div key={i} className="bg-white rounded-2xl border border-gray-100 h-28 animate-pulse" />
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="pb-10 font-sans">
-      <div className="mb-8">
-        <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight flex items-center gap-2">
-          Platform Overview
-        </h1>
-        <p className="text-sm font-semibold text-gray-500 mt-1 uppercase tracking-widest">Welcome back, Admin</p>
+    <div>
+      {/* Page header */}
+      <div className="mb-6">
+        <h1 className="text-2xl font-black text-gray-900">Platform Overview</h1>
+        <p className="text-gray-400 text-sm mt-1">Real-time metrics for OrangeBite</p>
       </div>
 
-      {/* Revenue banner */}
-      <div className="bg-gradient-to-r from-orange-500 to-orange-400 rounded-[2rem] p-8 mb-8 text-white shadow-xl shadow-orange-500/20 relative overflow-hidden">
-        <div className="relative z-10">
-          <div className="flex items-center gap-2 mb-2 opacity-90">
-             <Activity size={18} />
-             <p className="text-sm font-bold uppercase tracking-wider">Platform Revenue</p>
-          </div>
-          <p className="text-5xl font-black tracking-tight mb-2">₹{stats.revenue.toFixed(0)}</p>
-          <p className="text-white/80 font-medium text-sm">Total commission from delivered orders</p>
-        </div>
-        {/* Decorative elements */}
-        <div className="absolute -right-10 -bottom-10 w-48 h-48 bg-white opacity-10 rounded-full blur-2xl"></div>
-        <div className="absolute right-20 -top-10 w-32 h-32 bg-white opacity-10 rounded-full blur-xl"></div>
-      </div>
-
-      {/* Stats grid — 3 equal columns */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-5 mb-8">
-        {cards.map(card => (
-          <Link key={card.label} to={card.link} className="bg-white rounded-[1.5rem] p-6 shadow-sm border border-gray-100 hover:shadow-md hover:border-orange-100 transition-all group">
-            <div className={`w-12 h-12 ${card.bg} rounded-2xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform`}>
-              <card.icon size={22} className={card.color} />
+      {/* KPI Grid */}
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
+        {kpiCards.map(({ label, value, icon: Icon, color, bg, border, alert }) => (
+          <div
+            key={label}
+            className={`bg-white rounded-2xl border ${alert ? 'border-amber-200' : 'border-gray-100'} p-5 shadow-sm hover:shadow-md transition-shadow`}
+          >
+            <div className="flex items-start justify-between mb-3">
+              <div className={`w-10 h-10 ${bg} rounded-xl flex items-center justify-center`}>
+                <Icon className={`w-5 h-5 ${color}`} />
+              </div>
+              {alert && (
+                <span className="text-xs bg-amber-500 text-white font-bold px-2 py-0.5 rounded-full animate-pulse">
+                  Action needed
+                </span>
+              )}
             </div>
-            <p className="text-3xl font-extrabold text-gray-900 tracking-tight">{card.value}</p>
-            <p className="text-xs font-bold text-gray-500 mt-1 uppercase tracking-wider">{card.label}</p>
-          </Link>
+            <p className="text-2xl font-black text-gray-900">{value}</p>
+            <p className="text-xs text-gray-400 mt-1">{label}</p>
+          </div>
         ))}
       </div>
 
-      {/* Recent orders */}
-      <div className="bg-white rounded-[2rem] p-6 shadow-sm border border-gray-100">
-        <div className="flex items-center justify-between mb-6">
-          <h3 className="text-xl font-extrabold text-gray-900 tracking-tight">Recent Orders</h3>
-          <Link to="/admin/orders" className="text-sm font-bold text-orange-500 hover:text-orange-600 flex items-center gap-1 uppercase tracking-wider">
-            View All <ArrowRight size={16} />
-          </Link>
+      {/* Revenue breakdown — only shown when there's data */}
+      {revenue?.shopRevenueBreakdown && Object.keys(revenue.shopRevenueBreakdown).length > 0 && (
+        <div className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm mb-6">
+          <h3 className="font-bold text-gray-900 mb-5 flex items-center gap-2">
+            <BarChart2 className="w-4 h-4 text-orange-400" /> Revenue Summary
+          </h3>
+          <div className="grid grid-cols-3 gap-4">
+            {[
+              { label: 'Total GMV', value: `₹${(revenue.totalGmv || 0).toLocaleString('en-IN')}` },
+              { label: 'Platform Commission', value: `₹${(revenue.totalCommission || 0).toLocaleString('en-IN')}` },
+              { label: 'Shop Payouts', value: `₹${(revenue.totalPayoutToShops || 0).toLocaleString('en-IN')}` },
+            ].map(({ label, value }) => (
+              <div key={label} className="bg-gray-50 rounded-xl p-4">
+                <p className="text-xs text-gray-400 mb-1">{label}</p>
+                <p className="text-lg font-black text-gray-900">{value}</p>
+              </div>
+            ))}
+          </div>
         </div>
-        
-        {recentOrders.length === 0 ? (
-          <div className="text-center py-12">
-            <div className="w-16 h-16 bg-gray-50 rounded-full flex items-center justify-center mx-auto mb-4">
-               <ShoppingBag className="text-gray-300" size={24} />
+      )}
+
+      {/* Quick links */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <Link
+          to="/admin/users"
+          className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm hover:shadow-md hover:border-orange-200 transition-all group flex items-center justify-between"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-orange-50 rounded-xl flex items-center justify-center">
+              <Users className="w-5 h-5 text-orange-500" />
             </div>
-            <p className="text-gray-400 font-medium">No orders found</p>
+            <div>
+              <p className="font-bold text-gray-900 text-sm">Manage Users</p>
+              <p className="text-xs text-gray-400">Approve KYC, block accounts</p>
+            </div>
           </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="border-b-2 border-gray-100">
-                  <th className="pb-4 text-xs font-bold text-gray-400 uppercase tracking-wider">Order ID</th>
-                  <th className="pb-4 text-xs font-bold text-gray-400 uppercase tracking-wider">Restaurant</th>
-                  <th className="pb-4 text-xs font-bold text-gray-400 uppercase tracking-wider">Status</th>
-                  <th className="pb-4 text-xs font-bold text-gray-400 uppercase tracking-wider text-right">Amount</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50">
-                {recentOrders.map(order => (
-                  <tr key={order._id || order.id} className="hover:bg-gray-50 transition-colors">
-                    <td className="py-4 font-mono text-sm font-semibold text-gray-500">#{(order._id || order.id)?.slice(-6).toUpperCase()}</td>
-                    <td className="py-4 font-bold text-gray-900">{order.shop?.name || order.shops?.name || '—'}</td>
-                    <td className="py-4">
-                      <span className={`inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-bold uppercase tracking-wider ${STATUS_COLORS[order.status]}`}>
-                        {order.status?.replace('_', ' ')}
-                      </span>
-                    </td>
-                    <td className="py-4 text-right font-black text-gray-900">₹{(order.totalAmount || order.total_amount || 0).toFixed(0)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <ArrowUpRight className="w-4 h-4 text-gray-300 group-hover:text-orange-400 transition-colors" />
+        </Link>
+        <Link
+          to="/admin/shops"
+          className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm hover:shadow-md hover:border-orange-200 transition-all group flex items-center justify-between"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-orange-50 rounded-xl flex items-center justify-center">
+              <Store className="w-5 h-5 text-orange-500" />
+            </div>
+            <div>
+              <p className="font-bold text-gray-900 text-sm">Manage Shops</p>
+              <p className="text-xs text-gray-400">Approve restaurants, suspend shops</p>
+            </div>
           </div>
-        )}
+          <ArrowUpRight className="w-4 h-4 text-gray-300 group-hover:text-orange-400 transition-colors" />
+        </Link>
       </div>
+
+      {/* Empty state */}
+      {!kpis && (
+        <div className="bg-white rounded-2xl border border-gray-100 p-12 text-center shadow-sm">
+          <AlertCircle className="w-12 h-12 mx-auto text-gray-200 mb-3" />
+          <p className="text-gray-400">No dashboard data available</p>
+        </div>
+      )}
     </div>
   );
 }

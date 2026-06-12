@@ -9,4 +9,11 @@ export const store = configureStore({
     cart: cartReducer,
     ui: uiReducer,
   },
+  middleware: (getDefaultMiddleware) =>
+    getDefaultMiddleware({
+      serializableCheck: {
+        ignoredActions: ['cart/addItemSafe/fulfilled', 'ui/showClearCartModal'],
+        ignoredPaths: ['ui.clearCartModal.pendingItem'],
+      },
+    }),
 });
