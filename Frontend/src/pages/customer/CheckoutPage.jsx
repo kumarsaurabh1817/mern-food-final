@@ -66,7 +66,7 @@ export default function CheckoutPage() {
         const { data } = await api.post('/orders/checkout', orderPayload);
         dispatch(clearCart());
         dispatch(showToast({ message: 'Order placed successfully!', type: 'success' }));
-        navigate(`/track/${data.order._id}`);
+        navigate('/orders');
       } else {
         const { data: orderData } = await api.post('/orders/checkout', orderPayload);
         const { data: intentData } = await api.post('/payments/create-intent', { orderId: orderData.order._id });
@@ -77,10 +77,19 @@ export default function CheckoutPage() {
           name: 'OrangeBite',
           order_id: intentData.razorpayOrderId,
           handler: async (response) => {
-            await api.post('/payments/verify', { orderId: orderData.order._id, ...response });
-            dispatch(clearCart());
-            dispatch(showToast({ message: 'Payment successful! Order placed.', type: 'success' }));
-            navigate(`/track/${orderData.order._id}`);
+            // The Razorpay handler fires inside the SDK's own closure.
+            // Wrap in try/catch so a verify failure doesn't silently swallow the redirect.
+            try {
+              await api.post('/payments/verify', { orderId: orderData.order._id, ...response });
+              dispatch(clearCart());
+              dispatch(showToast({ message: 'Payment successful! Order placed.', type: 'success' }));
+            } catch (_) {
+              // Verification failed — still redirect so user sees their order list
+              dispatch(showToast({ message: 'Payment recorded. Please check your orders.', type: 'info' }));
+            }
+            // Use window.location.href as the guaranteed redirect — navigate() can
+            // fail silently when called from inside the Razorpay SDK callback context.
+            window.location.href = '/orders';
           },
           prefill: {},
           theme: { color: '#f97316' },

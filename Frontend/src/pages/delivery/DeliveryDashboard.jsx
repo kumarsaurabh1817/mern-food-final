@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
-import { ToggleLeft, ToggleRight, CheckCircle, XCircle, Send, Loader2, Navigation, DollarSign, Package, RefreshCw } from 'lucide-react';
+import { ToggleLeft, ToggleRight, CheckCircle, XCircle, Send, Loader2, Navigation, DollarSign, Package, RefreshCw, MapPin, UtensilsCrossed, IndianRupee } from 'lucide-react';
 import api from '../../lib/axios';
 import { io } from 'socket.io-client';
 import { useDispatch } from 'react-redux';
@@ -32,33 +32,66 @@ export default function DeliveryDashboard() {
 
   const fetchAll = async () => {
     try {
-      const [profileRes, poolRes, earningsRes] = await Promise.all([
+      const [profileRes, poolRes, earningsRes, myOrdersRes] = await Promise.all([
         api.get('/delivery/me'),
         api.get('/delivery/pool'),
         api.get('/delivery/earnings'),
+        // Restore active order after page refresh — fetch the order currently
+        // assigned to this agent that is still in transit (out_for_delivery).
+        api.get('/orders?status=out_for_delivery'),
       ]);
       setProfile(profileRes.data.profile || profileRes.data);
       setPool(poolRes.data.orders || poolRes.data || []);
       setEarnings(earningsRes.data);
+
+      // If there's an active order assigned to us, restore it from the server
+      const myOrders = myOrdersRes.data.orders || [];
+      const inProgress = myOrders.find((o) => o.status === 'out_for_delivery');
+      if (inProgress) {
+        setActiveOrder(inProgress);
+        setPool([]); // hide pool while delivering
+      }
     } catch (_) {}
     setLoading(false);
   };
 
   useEffect(() => {
     fetchAll();
-    const socket = io(import.meta.env.VITE_API_URL || 'http://localhost:5000', { withCredentials: true });
+    const token = localStorage.getItem('ob_access_token') || '';
+    const socket = io(import.meta.env.VITE_API_URL || 'http://localhost:5000', {
+      withCredentials: true,
+      // Pass the access token so the server can identify the delivery agent
+      auth: { token },
+    });
     socketRef.current = socket;
     return () => { socket.disconnect(); if (geoRef.current) navigator.geolocation.clearWatch(geoRef.current); };
   }, []);
 
   useEffect(() => {
-    if (!profile?.isOnline || !activeOrder) { if (geoRef.current) { navigator.geolocation.clearWatch(geoRef.current); geoRef.current = null; } return; }
+    if (!profile?.isOnline || !activeOrder) {
+      if (geoRef.current) { navigator.geolocation.clearWatch(geoRef.current); geoRef.current = null; }
+      return;
+    }
+
+    const emitLocation = (lat, lng) => {
+      setMyPos([lat, lng]);
+      socketRef.current?.emit('updateLocation', { orderId: activeOrder._id, lat, lng });
+    };
+
+    // ── Immediately get current position and push it to the server cache ──
+    // watchPosition only fires on movement — without this, a stationary agent
+    // would never populate the cache and the customer map stays blank.
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => emitLocation(pos.coords.latitude, pos.coords.longitude),
+        () => {}, // ignore error (permissions denied etc)
+        { enableHighAccuracy: true, timeout: 10000 }
+      );
+    }
+
+    // Continue watching for position changes
     geoRef.current = navigator.geolocation.watchPosition(
-      (pos) => {
-        const { latitude: lat, longitude: lng } = pos.coords;
-        setMyPos([lat, lng]);
-        socketRef.current?.emit('updateLocation', { orderId: activeOrder._id, lat, lng });
-      },
+      (pos) => emitLocation(pos.coords.latitude, pos.coords.longitude),
       () => {},
       { enableHighAccuracy: true }
     );
@@ -222,31 +255,75 @@ export default function DeliveryDashboard() {
             </div>
           ) : (
             <div className="space-y-3">
-              {pool.map((order) => (
-                <div key={order._id} className="border border-gray-100 rounded-xl p-4">
-                  <div className="flex justify-between mb-2">
-                    <p className="font-semibold text-gray-800">{order.shop?.name}</p>
-                    <p className="font-bold text-orange-500">₹{order.totalAmount}</p>
+              {pool.map((order) => {
+                const addr = order.deliveryAddress || {};
+                const addrLine = [addr.street, addr.city, addr.state].filter(Boolean).join(', ');
+                return (
+                  <div key={order._id} className="border border-gray-100 rounded-2xl p-4 space-y-3 hover:border-orange-200 transition-colors">
+
+                    {/* Header: restaurant + amount */}
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 bg-orange-50 rounded-lg flex items-center justify-center flex-shrink-0">
+                          <UtensilsCrossed className="w-4 h-4 text-orange-500" />
+                        </div>
+                        <div>
+                          <p className="font-bold text-gray-900 text-sm leading-tight">{order.shop?.name || 'Restaurant'}</p>
+                          <p className="text-xs text-gray-400">Pickup point</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-0.5 text-orange-500 font-black text-base flex-shrink-0">
+                        <IndianRupee className="w-4 h-4" />
+                        {order.totalAmount}
+                      </div>
+                    </div>
+
+                    {/* Items list */}
+                    <div className="bg-gray-50 rounded-xl px-3 py-2.5">
+                      <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1.5 flex items-center gap-1">
+                        <Package className="w-3 h-3" /> Items
+                      </p>
+                      <div className="space-y-0.5">
+                        {order.items?.map((item, idx) => (
+                          <div key={idx} className="flex justify-between items-center text-sm">
+                            <span className="text-gray-700">{item.name}</span>
+                            <span className="text-gray-500 font-medium ml-2 flex-shrink-0">× {item.quantity}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Destination address */}
+                    <div className="flex items-start gap-2">
+                      <MapPin className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
+                      <div>
+                        <p className="text-xs font-semibold text-gray-500 mb-0.5">Deliver to</p>
+                        <p className="text-sm text-gray-700 leading-snug">{addrLine || 'Address not available'}</p>
+                      </div>
+                    </div>
+
+                    {/* Accept / Reject buttons */}
+                    <div className="flex gap-2 pt-1">
+                      <button
+                        onClick={() => handleAccept(order._id)}
+                        disabled={actioning === order._id}
+                        className="flex-1 bg-green-500 hover:bg-green-600 text-white text-sm font-semibold py-2.5 rounded-xl transition-colors flex items-center justify-center gap-1.5 disabled:opacity-60 shadow-sm shadow-green-100"
+                      >
+                        {actioning === order._id ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
+                        Accept
+                      </button>
+                      <button
+                        onClick={() => handleReject(order._id)}
+                        disabled={actioning === order._id + '_reject'}
+                        className="flex-1 bg-red-50 hover:bg-red-100 border border-red-100 text-red-600 text-sm font-semibold py-2.5 rounded-xl transition-colors flex items-center justify-center gap-1.5 disabled:opacity-60"
+                      >
+                        {actioning === order._id + '_reject' ? <Loader2 className="w-4 h-4 animate-spin" /> : <XCircle className="w-4 h-4" />}
+                        Reject
+                      </button>
+                    </div>
                   </div>
-                  <p className="text-xs text-gray-400 mb-3">{order.deliveryAddress?.city}</p>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => handleAccept(order._id)}
-                      disabled={actioning === order._id}
-                      className="flex-1 bg-green-500 hover:bg-green-600 text-white text-sm font-semibold py-2 rounded-xl transition-colors flex items-center justify-center gap-1 disabled:opacity-60"
-                    >
-                      {actioning === order._id ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />} Accept
-                    </button>
-                    <button
-                      onClick={() => handleReject(order._id)}
-                      disabled={actioning === order._id + '_reject'}
-                      className="flex-1 bg-red-50 hover:bg-red-100 text-red-600 text-sm font-semibold py-2 rounded-xl transition-colors flex items-center justify-center gap-1"
-                    >
-                      <XCircle className="w-4 h-4" /> Reject
-                    </button>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

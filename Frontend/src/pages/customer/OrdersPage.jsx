@@ -114,7 +114,13 @@ export default function OrdersPage() {
                     </button>
                   )}
                   <span className="flex items-center gap-1 text-xs text-orange-500 font-medium">
-                    Track <ChevronRight className="w-3 h-3" />
+                    {order.status === 'out_for_delivery' ? (
+                      <>
+                        <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+                        Live Track
+                      </>
+                    ) : 'Track'}
+                    <ChevronRight className="w-3 h-3" />
                   </span>
                 </div>
               </div>

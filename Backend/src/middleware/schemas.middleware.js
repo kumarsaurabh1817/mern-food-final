@@ -16,7 +16,10 @@ export const signupSchema = [
     .withMessage("Email is required")
     .isEmail()
     .withMessage("Invalid email address")
-    .normalizeEmail(),
+    // Disable Gmail-specific normalizations: by default normalizeEmail() strips
+    // dots and removes +subaddresses from Gmail addresses, which mutates the email
+    // the user entered and causes Mongoose regex/uniqueness failures.
+    .normalizeEmail({ gmail_remove_dots: false, gmail_remove_subaddress: false }),
 
   body("password")
     .notEmpty()
@@ -59,7 +62,7 @@ export const loginSchema = [
     .withMessage("Email is required")
     .isEmail()
     .withMessage("Invalid email address")
-    .normalizeEmail(),
+    .normalizeEmail({ gmail_remove_dots: false, gmail_remove_subaddress: false }),
 
   body("password").notEmpty().withMessage("Password is required"),
 ];
@@ -71,7 +74,7 @@ export const forgotPasswordSchema = [
     .withMessage("Email is required")
     .isEmail()
     .withMessage("Invalid email address")
-    .normalizeEmail(),
+    .normalizeEmail({ gmail_remove_dots: false, gmail_remove_subaddress: false }),
 ];
 
 export const resetPasswordSchema = [

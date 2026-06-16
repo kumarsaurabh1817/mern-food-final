@@ -558,7 +558,9 @@ export const getOrderById = async (req, res, next) => {
 
 export const confirmOrder = async (req, res, next) => {
   try {
-    const { preparationTime } = req.body;
+    // Guard: PATCH requests from the frontend may have no body, leaving req.body
+    // as undefined. Fall back to {} so preparationTime is simply undefined (optional).
+    const { preparationTime } = req.body || {};
     const order = await Order.findById(req.params.id);
     if (!order)
       return res

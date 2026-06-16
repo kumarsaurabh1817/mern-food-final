@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { CheckCircle, ChefHat, Package, Clock, RefreshCw, Loader2 } from 'lucide-react';
+import { CheckCircle, ChefHat, Package, Clock, RefreshCw, Loader2, Banknote, CreditCard, ArrowRight } from 'lucide-react';
 import api from '../../lib/axios';
 import { io } from 'socket.io-client';
 import { useDispatch } from 'react-redux';
@@ -7,14 +7,33 @@ import { showToast } from '../../features/ui/uiSlice';
 import { useSelector } from 'react-redux';
 import { selectUser } from '../../features/auth/authSlice';
 
-const STATUS_META = {
-  pending:   { label: 'Pending', color: 'bg-amber-50 text-amber-600 border-amber-200', action: 'Confirm', next: 'confirm', actionColor: 'bg-blue-500 hover:bg-blue-600' },
-  confirmed: { label: 'Confirmed', color: 'bg-blue-50 text-blue-600 border-blue-200', action: 'Mark Preparing', next: 'preparing', actionColor: 'bg-purple-500 hover:bg-purple-600' },
-  preparing: { label: 'Preparing', color: 'bg-purple-50 text-purple-600 border-purple-200', action: 'Mark Ready', next: 'ready', actionColor: 'bg-cyan-500 hover:bg-cyan-600' },
-  ready_for_pickup: { label: 'Ready for Pickup', color: 'bg-cyan-50 text-cyan-600 border-cyan-200', action: null },
-  out_for_delivery: { label: 'Out for Delivery', color: 'bg-orange-50 text-orange-600 border-orange-200', action: null },
-  delivered: { label: 'Delivered', color: 'bg-green-50 text-green-600 border-green-200', action: null },
-  cancelled: { label: 'Cancelled', color: 'bg-red-50 text-red-600 border-red-200', action: null },
+// Consistent status badge colors
+const STATUS_BADGE = {
+  pending:          'bg-amber-50 text-amber-700 border-amber-200',
+  confirmed:        'bg-blue-50 text-blue-700 border-blue-200',
+  preparing:        'bg-purple-50 text-purple-700 border-purple-200',
+  ready_for_pickup: 'bg-cyan-50 text-cyan-700 border-cyan-200',
+  out_for_delivery: 'bg-orange-50 text-orange-700 border-orange-200',
+  delivered:        'bg-green-50 text-green-700 border-green-200',
+  cancelled:        'bg-red-50 text-red-700 border-red-200',
+};
+
+const STATUS_LABEL = {
+  pending:          'Pending',
+  confirmed:        'Confirmed',
+  preparing:        'Preparing',
+  ready_for_pickup: 'Ready for Pickup',
+  out_for_delivery: 'Out for Delivery',
+  delivered:        'Delivered',
+  cancelled:        'Cancelled',
+};
+
+// Each active status maps to the next action
+// All action buttons use one consistent style — only label changes
+const NEXT_ACTION = {
+  pending:   { label: 'Confirm Order',   route: 'confirm'   },
+  confirmed: { label: 'Start Preparing', route: 'preparing' },
+  preparing: { label: 'Mark Ready',      route: 'ready'     },
 };
 
 const FILTER_TABS = ['all', 'pending', 'confirmed', 'preparing', 'ready_for_pickup', 'out_for_delivery', 'delivered'];
@@ -42,10 +61,10 @@ export default function OwnerOrdersPage() {
     return () => socket.disconnect();
   }, []);
 
-  const handleAction = async (order, action) => {
+  const handleAction = async (order, route) => {
     setActioning(order._id);
     try {
-      await api.patch(`/orders/${order._id}/${action}`);
+      await api.patch(`/orders/${order._id}/${route}`, {});
       dispatch(showToast({ message: 'Order updated!', type: 'success' }));
       fetchOrders();
     } catch (err) {
@@ -69,14 +88,16 @@ export default function OwnerOrdersPage() {
         </button>
       </div>
 
-      {/* Status filter */}
-      <div className="flex gap-2 overflow-x-auto scrollbar-hide mb-5">
+      {/* Status filter tabs */}
+      <div className="flex gap-2 overflow-x-auto scrollbar-hide mb-5 pb-1">
         {FILTER_TABS.map((f) => (
           <button key={f} onClick={() => setFilter(f)}
             className={`flex-shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold capitalize transition-colors ${filter === f ? 'bg-orange-500 text-white' : 'bg-white border border-gray-200 text-gray-500 hover:border-orange-300'}`}>
             {f === 'all' ? 'All' : f.replace(/_/g, ' ')}
             {f !== 'all' && orders.filter((o) => o.status === f).length > 0 && (
-              <span className="ml-1.5 bg-white/20 rounded-full px-1.5">{orders.filter((o) => o.status === f).length}</span>
+              <span className={`ml-1.5 rounded-full px-1.5 ${filter === f ? 'bg-white/25 text-white' : 'bg-orange-50 text-orange-600'}`}>
+                {orders.filter((o) => o.status === f).length}
+              </span>
             )}
           </button>
         ))}
@@ -92,19 +113,36 @@ export default function OwnerOrdersPage() {
       ) : (
         <div className="space-y-4">
           {filteredOrders.map((order) => {
-            const meta = STATUS_META[order.status] || {};
+            const badgeClass = STATUS_BADGE[order.status] || 'bg-gray-50 text-gray-600 border-gray-200';
+            const statusLabel = STATUS_LABEL[order.status] || order.status;
+            const nextAction = NEXT_ACTION[order.status];
+            const isCOD = order.paymentMethod === 'cod';
+
             return (
               <div key={order._id} className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm">
+                {/* Header */}
                 <div className="flex items-start justify-between gap-4 mb-3">
                   <div>
-                    <p className="font-bold text-gray-900">Order #{order._id.slice(-6).toUpperCase()}</p>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="font-bold text-gray-900">Order #{order._id.slice(-6).toUpperCase()}</p>
+                      {/* Payment method badge */}
+                      <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full ${isCOD ? 'bg-amber-50 text-amber-700' : 'bg-indigo-50 text-indigo-700'}`}>
+                        {isCOD ? <Banknote className="w-3 h-3" /> : <CreditCard className="w-3 h-3" />}
+                        {isCOD ? 'Cash on Delivery' : 'Paid Online'}
+                      </span>
+                    </div>
                     <p className="text-xs text-gray-400 flex items-center gap-1 mt-0.5">
-                      <Clock className="w-3 h-3" /> {new Date(order.createdAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+                      <Clock className="w-3 h-3" />
+                      {new Date(order.createdAt).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
                     </p>
                   </div>
-                  <span className={`text-xs font-semibold px-2.5 py-1 rounded-full border ${meta.color}`}>{meta.label}</span>
+                  {/* Status badge */}
+                  <span className={`flex-shrink-0 text-xs font-semibold px-2.5 py-1 rounded-full border ${badgeClass}`}>
+                    {statusLabel}
+                  </span>
                 </div>
 
+                {/* Items */}
                 <div className="bg-gray-50 rounded-xl p-3 mb-3">
                   <p className="text-xs text-gray-500 mb-1.5 font-medium">Items</p>
                   {order.items?.map((item) => (
@@ -112,22 +150,34 @@ export default function OwnerOrdersPage() {
                   ))}
                 </div>
 
-                <div className="flex items-center justify-between">
+                {/* Footer: customer + amount + action button */}
+                <div className="flex items-center justify-between gap-3">
                   <div>
                     <p className="text-xs text-gray-400">Customer: <span className="text-gray-600">{order.customer?.name}</span></p>
-                    <p className="font-bold text-gray-900">₹{order.totalAmount}</p>
+                    <p className="font-bold text-gray-900 mt-0.5">₹{order.totalAmount}</p>
                   </div>
-                  {meta.action && (
+
+                  {/* Single consistent action button for all active statuses */}
+                  {nextAction && (
                     <button
-                      onClick={() => handleAction(order, meta.next)}
+                      onClick={() => handleAction(order, nextAction.route)}
                       disabled={actioning === order._id}
-                      className={`flex items-center gap-2 text-white text-sm font-semibold px-4 py-2 rounded-xl transition-colors ${meta.actionColor} disabled:opacity-60`}
+                      className="flex items-center gap-2 bg-orange-500 hover:bg-orange-600 disabled:opacity-60 text-white text-sm font-semibold px-4 py-2 rounded-xl transition-colors shadow-sm shadow-orange-100"
                     >
-                      {actioning === order._id ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
-                      {meta.action}
+                      {actioning === order._id
+                        ? <Loader2 className="w-4 h-4 animate-spin" />
+                        : <ArrowRight className="w-4 h-4" />}
+                      {nextAction.label}
                     </button>
                   )}
                 </div>
+
+                {/* COD info note for pending-skipped orders */}
+                {order.status === 'confirmed' && isCOD && (
+                  <p className="mt-3 text-xs text-amber-600 bg-amber-50 border border-amber-100 rounded-lg px-3 py-1.5">
+                    💵 COD order — auto-confirmed. Start preparing when ready.
+                  </p>
+                )}
               </div>
             );
           })}

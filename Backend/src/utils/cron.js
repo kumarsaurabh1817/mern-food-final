@@ -4,13 +4,19 @@ import Order from '../models/Order.js';
 import DeliveryProfile from '../models/DeliveryProfile.js';
 
 // ─── Every 5 minutes: auto-open/close shops based on operating hours ──────────
+// NOTE: Shop operatingHours are stored in local time (IST, UTC+5:30) by owners.
+// We use local server time (getHours/getMinutes) so the comparison matches.
+// If the server runs in UTC, set the TZ env variable to 'Asia/Kolkata' in your
+// hosting provider / process manager so Node.js local time is correct.
 cron.schedule('*/5 * * * *', async () => {
     try {
         const shops = await Shop.find({ isApproved: true, isSuspended: false }, 'isOpen operatingHours').lean();
         const now = new Date();
-        // Use UTC to avoid server-local timezone drift (store shop hours in UTC or add per-shop timezone).
-        const currentHours = now.getUTCHours();
-        const currentMinutes = now.getUTCMinutes();
+
+        // Use LOCAL server time, not UTC. Shop hours are entered by owners in their
+        // local timezone (IST). Make sure TZ=Asia/Kolkata is set on the server.
+        const currentHours = now.getHours();
+        const currentMinutes = now.getMinutes();
         const currentTime = currentHours * 60 + currentMinutes;
 
         const openShopIds = [];
@@ -27,9 +33,10 @@ cron.schedule('*/5 * * * *', async () => {
                 let shouldBeOpen = false;
 
                 if (openTime <= closeTime) {
+                    // Normal case: shop opens and closes on the same day
                     shouldBeOpen = currentTime >= openTime && currentTime <= closeTime;
                 } else {
-                    // Handles crossing midnight (e.g., 22:00 to 02:00)
+                    // Overnight case: e.g. 22:00 – 02:00 crosses midnight
                     shouldBeOpen = currentTime >= openTime || currentTime <= closeTime;
                 }
 
