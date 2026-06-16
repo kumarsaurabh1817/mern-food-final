@@ -1,13 +1,12 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
-import { Package, CheckCircle, ChevronLeft, Navigation, Loader2 } from 'lucide-react';
+import { Package, CheckCircle, ChevronLeft, Navigation, Loader2, Store, MapPin } from 'lucide-react';
 import api from '../../lib/axios';
 import { io } from 'socket.io-client';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 
-// Fix default leaflet marker icons
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png',
@@ -15,14 +14,10 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
 });
 
-// Custom orange icon for delivery agent
 const agentIcon = new L.Icon({
   iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-orange.png',
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
-  iconSize: [25, 41],
-  iconAnchor: [12, 41],
-  popupAnchor: [1, -34],
-  shadowSize: [41, 41],
+  iconSize: [25, 41], iconAnchor: [12, 41], popupAnchor: [1, -34], shadowSize: [41, 41],
 });
 
 const STATUS_STEPS = [
@@ -50,36 +45,25 @@ export default function OrderTrackingPage() {
   const [mapReady, setMapReady] = useState(false);
   const socketRef = useRef(null);
 
-  // ── Fetch order details ────────────────────────────────────────────────────
   useEffect(() => {
     api.get(`/orders/${orderId}`)
       .then(({ data }) => setOrder(data.order || data))
       .catch(() => navigate('/orders'));
   }, [orderId, navigate]);
 
-  // ── Connect to socket and join the order room ──────────────────────────────
   useEffect(() => {
     const token = localStorage.getItem(TOKEN_KEY) || '';
-
     const socket = io(import.meta.env.VITE_API_URL || 'http://localhost:5000', {
       withCredentials: true,
-      // Pass the access token so the socket middleware recognises the user.
-      // Without this the middleware rejects/ignores the connection.
       auth: { token },
     });
     socketRef.current = socket;
 
     socket.on('connect', () => {
-      // Join the order-specific room to receive location + status updates.
       socket.emit('joinOrderRoom', orderId);
-
-      // Also pull the last cached location immediately — the server will reply
-      // with agentLocationUpdated if it has a cached position. This handles
-      // the case where the agent was already moving before we joined the room.
       socket.emit('requestAgentLocation', orderId);
     });
 
-    // Real-time agent location updates
     socket.on('agentLocationUpdated', ({ lat, lng }) => {
       if (Number.isFinite(lat) && Number.isFinite(lng)) {
         setAgentPos([lat, lng]);
@@ -87,157 +71,201 @@ export default function OrderTrackingPage() {
       }
     });
 
-    // Real-time order status changes
-    socket.on('order:status', ({ status }) => {
-      setOrder((prev) => prev ? { ...prev, status } : prev);
-    });
-    socket.on('orderStatusUpdated', ({ status }) => {
-      setOrder((prev) => prev ? { ...prev, status } : prev);
-    });
+    socket.on('order:status', ({ status }) => setOrder((p) => p ? { ...p, status } : p));
+    socket.on('orderStatusUpdated', ({ status }) => setOrder((p) => p ? { ...p, status } : p));
 
     return () => socket.disconnect();
   }, [orderId]);
 
-  // ── Show map placeholder when agent is out for delivery ────────────────────
   useEffect(() => {
     if (order?.status === 'out_for_delivery') setMapReady(true);
   }, [order?.status]);
 
   const currentStepIndex = STATUS_STEPS.findIndex((s) => s.key === order?.status);
+  const isOutForDelivery = order?.status === 'out_for_delivery';
+  const isDelivered = order?.status === 'delivered';
 
-  // ── Loading state ──────────────────────────────────────────────────────────
   if (!order) {
     return (
-      <div className="max-w-2xl mx-auto px-4 py-20 text-center">
-        <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4 animate-pulse">
-          <Package className="w-8 h-8 text-gray-300" />
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <div className="text-center">
+          <div className="w-16 h-16 bg-orange-50 rounded-full flex items-center justify-center mx-auto mb-4 animate-pulse">
+            <Package className="w-8 h-8 text-orange-300" />
+          </div>
+          <p className="text-gray-400">Loading order details...</p>
         </div>
-        <p className="text-gray-400">Loading order details...</p>
       </div>
     );
   }
 
-  const isOutForDelivery = order.status === 'out_for_delivery';
-  const isDelivered = order.status === 'delivered';
-
   return (
-    <div className="max-w-2xl mx-auto px-4 sm:px-6 py-8">
-      <button onClick={() => navigate('/orders')} className="flex items-center gap-2 text-sm text-gray-500 hover:text-gray-700 mb-5">
-        <ChevronLeft className="w-4 h-4" /> My Orders
-      </button>
-
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-xl font-black text-gray-900">Track Order</h1>
+    <div className="px-4 sm:px-6 py-6 max-w-screen-xl mx-auto">
+      {/* Back button + title row */}
+      <div className="flex items-center gap-4 mb-6">
+        <button
+          onClick={() => navigate('/orders')}
+          className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 transition-colors"
+        >
+          <ChevronLeft className="w-4 h-4" /> My Orders
+        </button>
+        <div className="flex-1">
+          <h1 className="text-xl font-black text-gray-900 leading-none">Track Order</h1>
           <p className="text-xs text-gray-400 mt-0.5">#{orderId.slice(-8).toUpperCase()}</p>
         </div>
         {isDelivered && (
-          <div className="flex items-center gap-1.5 bg-green-50 text-green-600 text-sm font-semibold px-3 py-1.5 rounded-full">
+          <div className="flex items-center gap-1.5 bg-green-50 text-green-600 text-sm font-semibold px-3 py-1.5 rounded-full border border-green-200">
             <CheckCircle className="w-4 h-4" /> Delivered
           </div>
         )}
       </div>
 
-      {/* ── Status timeline ─────────────────────────────────────────────────── */}
-      <div className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm mb-5">
-        <div className="flex items-start justify-between">
-          {STATUS_STEPS.map((step, i) => {
-            const stepIdx = STATUS_STEPS.findIndex((s) => s.key === step.key);
-            const done = stepIdx <= currentStepIndex;
-            const active = stepIdx === currentStepIndex;
-            const isLast = i === STATUS_STEPS.length - 1;
-            return (
-              <div key={step.key} className="flex flex-col items-center flex-1">
-                <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-all duration-500
-                  ${done ? 'bg-orange-500 text-white shadow-md shadow-orange-200' : 'bg-gray-100 text-gray-400'}
-                  ${active ? 'ring-4 ring-orange-100 scale-110' : ''}`}>
-                  {done ? <CheckCircle className="w-4 h-4" /> : i + 1}
+      {/* ── Two-column split layout ──────────────────────────────────────────── */}
+      {/* On mobile: stacks vertically. On lg+: left info | right map side-by-side */}
+      <div className="flex flex-col lg:flex-row gap-5">
+
+        {/* ── LEFT COLUMN — Order info ──────────────────────────────────────── */}
+        <div className="flex flex-col gap-5 lg:w-[420px] xl:w-[460px] flex-shrink-0">
+
+          {/* Status timeline */}
+          <div className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm">
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-4">Order Progress</p>
+            <div className="flex items-start justify-between">
+              {STATUS_STEPS.map((step, i) => {
+                const stepIdx = STATUS_STEPS.findIndex((s) => s.key === step.key);
+                const done = stepIdx <= currentStepIndex;
+                const active = stepIdx === currentStepIndex;
+                return (
+                  <div key={step.key} className="flex flex-col items-center flex-1">
+                    <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-all duration-500
+                      ${done ? 'bg-orange-500 text-white shadow-md shadow-orange-200' : 'bg-gray-100 text-gray-400'}
+                      ${active ? 'ring-4 ring-orange-100 scale-110' : ''}`}>
+                      {done ? <CheckCircle className="w-4 h-4" /> : i + 1}
+                    </div>
+                    <p className={`text-[10px] mt-1.5 text-center leading-tight font-medium
+                      ${active ? 'text-orange-500' : done ? 'text-gray-600' : 'text-gray-300'}`}>
+                      {step.label}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="relative mt-3 h-1.5 bg-gray-100 rounded-full mx-4">
+              <div
+                className="absolute top-0 left-0 h-full bg-orange-500 rounded-full transition-all duration-700"
+                style={{ width: `${Math.max(0, (currentStepIndex / (STATUS_STEPS.length - 1)) * 100)}%` }}
+              />
+            </div>
+          </div>
+
+          {/* Restaurant + items */}
+          <div className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-8 h-8 bg-orange-50 rounded-lg flex items-center justify-center">
+                <Store className="w-4 h-4 text-orange-500" />
+              </div>
+              <div>
+                <p className="font-bold text-gray-900 text-sm">{order.shop?.name}</p>
+                <p className="text-xs text-gray-400">Restaurant</p>
+              </div>
+            </div>
+
+            <div className="bg-gray-50 rounded-xl p-3 mb-3 space-y-1.5">
+              {order.items?.map((item) => (
+                <div key={item._id || item.name} className="flex justify-between text-sm">
+                  <span className="text-gray-700">{item.name} <span className="text-gray-400">×{item.quantity}</span></span>
+                  <span className="text-gray-600 font-medium">₹{item.price * item.quantity}</span>
                 </div>
-                <p className={`text-xs mt-1.5 text-center leading-tight
-                  ${active ? 'text-orange-500 font-semibold' : done ? 'text-gray-600' : 'text-gray-300'}`}>
-                  {step.label}
-                </p>
-                {/* Connector line between steps */}
-                {!isLast && (
-                  <div className="absolute" />
-                )}
+              ))}
+            </div>
+
+            <div className="flex justify-between text-sm font-bold text-gray-900 pt-1 border-t border-gray-100">
+              <span>Total</span><span>₹{order.totalAmount}</span>
+            </div>
+          </div>
+
+          {/* Delivery address */}
+          {order.deliveryAddress && (
+            <div className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm">
+              <div className="flex items-start gap-3">
+                <div className="w-8 h-8 bg-red-50 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5">
+                  <MapPin className="w-4 h-4 text-red-500" />
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Delivery Address</p>
+                  <p className="text-sm text-gray-700 leading-relaxed">
+                    {[order.deliveryAddress.street, order.deliveryAddress.city, order.deliveryAddress.state, order.deliveryAddress.zipCode].filter(Boolean).join(', ')}
+                  </p>
+                </div>
               </div>
-            );
-          })}
-        </div>
-        {/* Progress bar */}
-        <div className="relative mt-3 h-1.5 bg-gray-100 rounded-full mx-4">
-          <div
-            className="absolute top-0 left-0 h-full bg-orange-500 rounded-full transition-all duration-700"
-            style={{ width: `${Math.max(0, (currentStepIndex / (STATUS_STEPS.length - 1)) * 100)}%` }}
-          />
-        </div>
-      </div>
+            </div>
+          )}
 
-      {/* ── Live tracking map ────────────────────────────────────────────────── */}
-      {mapReady && (
-        <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden shadow-sm mb-5">
-          <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-100">
-            <Navigation className="w-4 h-4 text-orange-500" />
-            <span className="font-semibold text-gray-800 text-sm">Live Delivery Tracking</span>
-            {isOutForDelivery && !isDelivered && (
-              <span className="ml-auto flex items-center gap-1.5 text-xs text-green-600 font-medium">
-                <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
-                Live
-              </span>
-            )}
+          {/* OTP card */}
+          {order.deliveryOTP && !isDelivered && (
+            <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-2xl p-5 text-center shadow-lg shadow-orange-200">
+              <p className="text-orange-100 text-xs mb-2 font-medium">Share this OTP with the delivery agent</p>
+              <p className="text-4xl font-black text-white tracking-[0.3em]">{order.deliveryOTP}</p>
+            </div>
+          )}
+        </div>
+
+        {/* ── RIGHT COLUMN — Live map (sticky on desktop) ───────────────────── */}
+        <div className="flex-1 min-h-[400px] lg:min-h-0">
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden h-full flex flex-col lg:sticky lg:top-6" style={{ minHeight: '480px' }}>
+            {/* Map header */}
+            <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-100 flex-shrink-0">
+              <Navigation className="w-4 h-4 text-orange-500" />
+              <span className="font-semibold text-gray-800 text-sm">Live Delivery Tracking</span>
+              {isOutForDelivery && !isDelivered && (
+                <span className="ml-auto flex items-center gap-1.5 text-xs text-green-600 font-medium">
+                  <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+                  Live
+                </span>
+              )}
+            </div>
+
+            {/* Map body */}
+            <div className="flex-1 relative" style={{ minHeight: '420px' }}>
+              {mapReady ? (
+                agentPos ? (
+                  <MapContainer
+                    center={agentPos}
+                    zoom={15}
+                    style={{ height: '100%', width: '100%', position: 'absolute', inset: 0 }}
+                  >
+                    <TileLayer
+                      url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                      attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+                    />
+                    <Marker position={agentPos} icon={agentIcon}>
+                      <Popup>
+                        <span className="font-semibold text-orange-600">🛵 Delivery Agent</span><br />
+                        <span className="text-xs text-gray-500">Heading your way</span>
+                      </Popup>
+                    </Marker>
+                    <MapUpdater position={agentPos} />
+                  </MapContainer>
+                ) : (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-50 gap-3">
+                    <div className="w-14 h-14 bg-orange-50 rounded-full flex items-center justify-center">
+                      <Loader2 className="w-7 h-7 text-orange-400 animate-spin" />
+                    </div>
+                    <p className="text-sm font-medium text-gray-600">Waiting for agent location...</p>
+                    <p className="text-xs text-gray-400">The map updates automatically</p>
+                  </div>
+                )
+              ) : (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-50 gap-3">
+                  <div className="w-14 h-14 bg-gray-100 rounded-full flex items-center justify-center">
+                    <Navigation className="w-7 h-7 text-gray-300" />
+                  </div>
+                  <p className="text-sm font-medium text-gray-500">Live tracking available</p>
+                  <p className="text-xs text-gray-400">Map will appear when your order is out for delivery</p>
+                </div>
+              )}
+            </div>
           </div>
-
-          <div className="h-64">
-            {agentPos ? (
-              <MapContainer center={agentPos} zoom={15} style={{ height: '100%', width: '100%' }} zoomControl={true}>
-                <TileLayer
-                  url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                  attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-                />
-                <Marker position={agentPos} icon={agentIcon}>
-                  <Popup>
-                    <span className="font-semibold text-orange-600">🛵 Delivery Agent</span><br />
-                    <span className="text-xs text-gray-500">Heading your way</span>
-                  </Popup>
-                </Marker>
-                <MapUpdater position={agentPos} />
-              </MapContainer>
-            ) : (
-              // Agent is out for delivery but hasn't sent a location yet
-              <div className="h-full flex flex-col items-center justify-center bg-gray-50 gap-3">
-                <Loader2 className="w-6 h-6 text-orange-400 animate-spin" />
-                <p className="text-sm text-gray-400">Waiting for agent location...</p>
-                <p className="text-xs text-gray-300">The map will update automatically</p>
-              </div>
-            )}
-          </div>
         </div>
-      )}
-
-      {/* ── Order details ─────────────────────────────────────────────────────── */}
-      <div className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm">
-        <h3 className="font-bold text-gray-900 mb-3">Order Details</h3>
-        <p className="text-sm text-gray-600 mb-2"><strong className="text-gray-800">From:</strong> {order.shop?.name}</p>
-        <div className="space-y-1">
-          {order.items?.map((item) => (
-            <p key={item._id || item.name} className="text-sm text-gray-500">
-              {item.name} × {item.quantity} — ₹{item.price * item.quantity}
-            </p>
-          ))}
-        </div>
-        <hr className="my-3 border-gray-100" />
-        <div className="flex justify-between text-sm font-bold text-gray-900">
-          <span>Total</span><span>₹{order.totalAmount}</span>
-        </div>
-
-        {/* OTP — only shown when out for delivery */}
-        {order.deliveryOTP && !isDelivered && (
-          <div className="mt-4 bg-orange-50 border border-orange-100 rounded-xl p-4 text-center">
-            <p className="text-xs text-gray-500 mb-1">Share this OTP with the delivery agent</p>
-            <p className="text-3xl font-black text-orange-500 tracking-widest">{order.deliveryOTP}</p>
-          </div>
-        )}
       </div>
     </div>
   );
