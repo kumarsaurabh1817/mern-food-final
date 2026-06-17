@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Search, Clock, SlidersHorizontal, UtensilsCrossed, ChevronLeft, ChevronRight } from 'lucide-react';
 import api from '../../lib/axios';
@@ -18,6 +18,7 @@ export default function AllRestaurantsPage() {
   const [sort, setSort] = useState('');
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
+  const debounceRef = useRef(null);
 
   const fetchShops = async () => {
     setLoading(true);
@@ -33,8 +34,21 @@ export default function AllRestaurantsPage() {
 
   useEffect(() => { fetchShops(); }, [searchParams, page, sort]);
 
+  // Debounce live-search: only fire the API call 400ms after the user stops typing.
+  // This prevents a request on every keystroke while still feeling responsive.
+  const handleQueryChange = (e) => {
+    const val = e.target.value;
+    setQuery(val);
+    clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      setPage(1);
+      setSearchParams(val.trim() ? { q: val.trim() } : {});
+    }, 400);
+  };
+
   const handleSearch = (e) => {
     e.preventDefault();
+    clearTimeout(debounceRef.current);
     setPage(1);
     setSearchParams(query.trim() ? { q: query.trim() } : {});
   };
@@ -49,7 +63,7 @@ export default function AllRestaurantsPage() {
             <input
               type="text"
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={handleQueryChange}
               placeholder="Search restaurants or cuisines..."
               className="w-full pl-9 pr-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100"
             />
@@ -101,6 +115,8 @@ export default function AllRestaurantsPage() {
                 <img
                   src={shop.images?.[0] || 'https://images.pexels.com/photos/958545/pexels-photo-958545.jpeg?auto=compress&cs=tinysrgb&w=400'}
                   alt={shop.name}
+                  loading="lazy"
+                  decoding="async"
                   className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                 />
                 {!shop.isOpen && <div className="absolute inset-0 bg-black/40 flex items-center justify-center"><span className="bg-white text-gray-700 text-xs font-bold px-3 py-1.5 rounded-full">Closed</span></div>}

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Package, ChevronRight, Clock, MapPin, XCircle } from 'lucide-react';
+import { Package, ChevronRight, Clock, XCircle } from 'lucide-react';
 import api from '../../lib/axios';
 import { useDispatch } from 'react-redux';
 import { showToast } from '../../features/ui/uiSlice';

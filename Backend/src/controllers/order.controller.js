@@ -1,6 +1,6 @@
 import Order from "../models/Order.js";
 import Shop from "../models/Shop.js";
-import { getIO } from "../socket/index.js";
+import { getIO, deleteAgentLocationCache } from "../socket/index.js";
 import MenuItem from "../models/MenuItem.js";
 import crypto from "crypto";
 import bcrypt from "bcrypt";
@@ -584,6 +584,15 @@ export const confirmOrder = async (req, res, next) => {
     order.preparationTime = preparationTime;
     await order.save();
 
+    // Notify the customer's tracking page in real-time
+    try {
+      const io = getIO();
+      io.to(`order_${order._id}`).emit("order:status", {
+        orderId: order._id,
+        status: "confirmed",
+      });
+    } catch (_) { /* socket not critical */ }
+
     res.status(200).json({ success: true, order });
   } catch (error) {
     next(error);
@@ -693,6 +702,9 @@ export const cancelOrder = async (req, res, next) => {
     order.status = "cancelled";
     await order.save();
 
+    // Evict the cached agent location — order is cancelled
+    deleteAgentLocationCache(order._id);
+
     // ── Real-time: push cancellation to customer's tracking page instantly ──
     try {
       const io = getIO();
@@ -727,7 +739,7 @@ export const verifyDeliveryOtp = async (req, res, next) => {
         .json({ success: false, message: "OTP is required" });
 
     // Explicitly select the hidden deliveryOTP field so we can use it as fallback
-    const order = await Order.findById(req.params.id).select("+deliveryOTP");
+    const order = await Order.findById(req.params.id).select("+deliveryOTP +deliveryOTPHash");
     if (!order)
       return res
         .status(404)
@@ -765,6 +777,10 @@ export const verifyDeliveryOtp = async (req, res, next) => {
     order.status = "delivered";
     // deliveryAgent is already set when agent accepted — do NOT overwrite
     await order.save();
+
+    // Evict the cached agent location — order is complete
+    deleteAgentLocationCache(req.params.id);
+
     res.status(200).json({ success: true, order });
   } catch (error) {
     next(error);

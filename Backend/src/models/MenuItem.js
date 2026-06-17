@@ -10,7 +10,6 @@ const MenuItemSchema = new mongoose.Schema(
     image: { type: String },
     isVeg: { type: Boolean, required: true },
     isAvailable: { type: Boolean, default: true },
-    quantity: { type: Number },
     isDeleted: { type: Boolean, default: false },
   },
   { timestamps: true },

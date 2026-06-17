@@ -120,3 +120,11 @@ export const getIO = () => {
     if (!io) throw new Error("Socket.io not initialized!");
     return io;
 };
+
+/**
+ * Remove a delivered/cancelled order's location from the in-process cache.
+ * Call this in order.controller after status becomes 'delivered' or 'cancelled'.
+ */
+export const deleteAgentLocationCache = (orderId) => {
+    if (orderId) agentLocationCache.delete(String(orderId));
+};

@@ -9,6 +9,7 @@ import api from '../../lib/axios';
 import { io } from 'socket.io-client';
 import { useDispatch } from 'react-redux';
 import { showToast } from '../../features/ui/uiSlice';
+import { TOKEN_KEY } from '../../lib/constants';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 
@@ -38,23 +39,46 @@ export default function DeliveryDashboard() {
   const socketRef = useRef(null);
   const geoRef = useRef(null);
 
+  const fetchPool = async () => {
+    try {
+      const res = await api.get('/delivery/pool');
+      const orders = res.data.orders || res.data || [];
+      // Deduplicate by _id — last-resort guard against any race condition
+      const seen = new Set();
+      const unique = orders.filter((o) => {
+        if (seen.has(o._id)) return false;
+        seen.add(o._id);
+        return true;
+      });
+      setPool(unique);
+    } catch (_) {
+      // 400 = agent is offline — pool stays empty, which is correct
+      setPool([]);
+    }
+  };
+
   const fetchAll = async () => {
     try {
-      const [profileRes, poolRes, earningsRes, myOrdersRes] = await Promise.all([
+      const [profileRes, earningsRes, myOrdersRes] = await Promise.all([
         api.get('/delivery/me'),
-        api.get('/delivery/pool'),
         api.get('/delivery/earnings'),
         api.get('/orders?status=out_for_delivery'),
       ]);
-      setProfile(profileRes.data.profile || profileRes.data);
-      setPool(poolRes.data.orders || poolRes.data || []);
+      const prof = profileRes.data.profile || profileRes.data;
+      setProfile(prof);
       setEarnings(earningsRes.data);
 
       const myOrders = myOrdersRes.data.orders || [];
       const inProgress = myOrders.find((o) => o.status === 'out_for_delivery');
       if (inProgress) {
+        // Agent already has an active delivery — don't show pool at all
         setActiveOrder(inProgress);
         setPool([]);
+      } else {
+        setActiveOrder(null);
+        // Only fetch pool if the agent is online
+        if (prof?.isOnline) await fetchPool();
+        else setPool([]);
       }
     } catch (_) {}
     setLoading(false);
@@ -62,7 +86,7 @@ export default function DeliveryDashboard() {
 
   useEffect(() => {
     fetchAll();
-    const token = localStorage.getItem('ob_access_token') || '';
+    const token = localStorage.getItem(TOKEN_KEY) || '';
     const socket = io(import.meta.env.VITE_API_URL || 'http://localhost:5000', {
       withCredentials: true,
       auth: { token },
@@ -105,9 +129,15 @@ export default function DeliveryDashboard() {
   const toggleDuty = async () => {
     try {
       const { data } = await api.patch('/delivery/toggle-duty');
-      setProfile((prev) => ({ ...prev, isOnline: data.isOnline ?? !prev.isOnline }));
-      dispatch(showToast({ message: `You are now ${data.isOnline ? 'on duty' : 'off duty'}`, type: 'info' }));
-      if (data.isOnline) fetchAll();
+      const nowOnline = data.isOnline ?? !profile?.isOnline;
+      setProfile((prev) => ({ ...prev, isOnline: nowOnline }));
+      dispatch(showToast({ message: `You are now ${nowOnline ? 'on duty' : 'off duty'}`, type: 'info' }));
+      if (nowOnline) {
+        // Fetch pool fresh when going online
+        await fetchPool();
+      } else {
+        setPool([]);
+      }
     } catch (_) {
       dispatch(showToast({ message: 'Failed to toggle duty', type: 'error' }));
     }
@@ -144,9 +174,13 @@ export default function DeliveryDashboard() {
     if (!activeOrder) return;
     try {
       await api.post(`/delivery/release/${activeOrder._id}`);
+      // Clear active order and pool immediately — don't wait for fetchPool
+      // to avoid showing the released order back in this agent's pool.
       setActiveOrder(null);
-      fetchAll();
+      setPool([]);
       dispatch(showToast({ message: 'Order released back to pool', type: 'info' }));
+      // Fetch pool after a short delay to let the DB write settle
+      setTimeout(fetchPool, 500);
     } catch (err) {
       dispatch(showToast({ message: 'Failed to release order', type: 'error' }));
     }

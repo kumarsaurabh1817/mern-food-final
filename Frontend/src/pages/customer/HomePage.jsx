@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, memo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Search, Star, Clock, ChevronRight, TrendingUp, Zap, UtensilsCrossed } from 'lucide-react';
 import api from '../../lib/axios';
@@ -33,7 +33,7 @@ export default function HomePage() {
       {/* Hero */}
       <section className="relative bg-gradient-to-br from-orange-500 via-orange-600 to-amber-500 py-20 px-4 overflow-hidden">
         <div className="absolute inset-0 opacity-10">
-          <img src={HERO_IMAGES[0]} alt="" className="w-full h-full object-cover" />
+          <img src={HERO_IMAGES[0]} alt="" loading="lazy" decoding="async" className="w-full h-full object-cover" />
         </div>
         <div className="relative max-w-3xl mx-auto text-center">
           <div className="inline-flex items-center gap-2 bg-white/20 backdrop-blur text-white text-sm font-medium px-4 py-1.5 rounded-full mb-6">
@@ -138,7 +138,7 @@ export default function HomePage() {
   );
 }
 
-function ShopCard({ shop }) {
+const ShopCard = memo(function ShopCard({ shop }) {
   const navigate = useNavigate();
   return (
     <div
@@ -148,6 +148,8 @@ function ShopCard({ shop }) {
       <div className="relative h-44 overflow-hidden">
         <img
           src={shop.images?.[0] || 'https://images.pexels.com/photos/958545/pexels-photo-958545.jpeg?auto=compress&cs=tinysrgb&w=600'}
+          loading="lazy"
+          decoding="async"
           alt={shop.name}
           className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
         />
@@ -175,4 +177,4 @@ function ShopCard({ shop }) {
       </div>
     </div>
   );
-}
+});

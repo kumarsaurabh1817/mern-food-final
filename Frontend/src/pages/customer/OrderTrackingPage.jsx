@@ -4,6 +4,7 @@ import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import { Package, CheckCircle, ChevronLeft, Navigation, Loader2, Store, MapPin } from 'lucide-react';
 import api from '../../lib/axios';
 import { io } from 'socket.io-client';
+import { TOKEN_KEY } from '../../lib/constants';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 
@@ -35,7 +36,6 @@ function MapUpdater({ position }) {
   return null;
 }
 
-const TOKEN_KEY = 'ob_access_token';
 
 export default function OrderTrackingPage() {
   const { orderId } = useParams();
@@ -46,12 +46,20 @@ export default function OrderTrackingPage() {
   const socketRef = useRef(null);
 
   useEffect(() => {
+    // Guard: redirect immediately if orderId is not a valid Mongo ObjectId
+    if (!orderId || !/^[a-f\d]{24}$/i.test(orderId)) {
+      navigate('/orders', { replace: true });
+      return;
+    }
     api.get(`/orders/${orderId}`)
       .then(({ data }) => setOrder(data.order || data))
       .catch(() => navigate('/orders'));
   }, [orderId, navigate]);
 
   useEffect(() => {
+    // Don't connect the socket until we know orderId is valid
+    if (!orderId || !/^[a-f\d]{24}$/i.test(orderId)) return;
+
     const token = localStorage.getItem(TOKEN_KEY) || '';
     const socket = io(import.meta.env.VITE_API_URL || 'http://localhost:5000', {
       withCredentials: true,
@@ -110,7 +118,7 @@ export default function OrderTrackingPage() {
         </button>
         <div className="flex-1">
           <h1 className="text-xl font-black text-gray-900 leading-none">Track Order</h1>
-          <p className="text-xs text-gray-400 mt-0.5">#{orderId.slice(-8).toUpperCase()}</p>
+          <p className="text-xs text-gray-400 mt-0.5">#{(orderId || '').slice(-8).toUpperCase()}</p>
         </div>
         {isDelivered && (
           <div className="flex items-center gap-1.5 bg-green-50 text-green-600 text-sm font-semibold px-3 py-1.5 rounded-full border border-green-200">

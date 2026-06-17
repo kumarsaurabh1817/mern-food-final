@@ -166,6 +166,7 @@ export const addAddress = async (req, res, next) => {
       success: true,
       message: "Address added successfully",
       address: addedAddress,
+      addresses: user.addresses,       // full list — CheckoutPage reads data.addresses
       totalAddresses: user.addresses.length,
       canAddMore: user.addresses.length < 5,
     });

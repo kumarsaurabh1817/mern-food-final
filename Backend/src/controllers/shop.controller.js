@@ -15,7 +15,12 @@ export const getShops = async (req, res, next) => {
 
     // Run find + count in parallel — same pattern as getOrders controller
     const [shops, total] = await Promise.all([
-      Shop.find(filter).skip(skip).limit(limit).sort({ createdAt: -1 }),
+      Shop.find(filter)
+        .select('name category images address.city address.state isOpen operatingHours')
+        .skip(skip)
+        .limit(limit)
+        .sort({ createdAt: -1 })
+        .lean(),
       Shop.countDocuments(filter),
     ]);
 

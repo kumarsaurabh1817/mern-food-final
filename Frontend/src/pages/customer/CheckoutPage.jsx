@@ -22,9 +22,12 @@ export default function CheckoutPage() {
   const [loading, setLoading] = useState(false);
   const [addressForm, setAddressForm] = useState({ show: false, label: '', street: '', city: '', state: '', zipCode: '' });
 
-  const platformFee = Math.round(cartTotal * 0.1);
+  // These match the backend formulas exactly so the displayed total === what is charged.
+  // Backend: platformFee = subtotal * 0.1 (float), deliveryCharge = 5 (fixed)
+  const platformFee = cartTotal * 0.1;            // keep as float — matches backend
   const deliveryCharge = 5;
-  const total = cartTotal + platformFee + deliveryCharge;
+  const total = cartTotal + platformFee + deliveryCharge; // exact, no rounding
+
 
   useEffect(() => {
     if (cartItems.length === 0) navigate('/cart');
@@ -63,33 +66,52 @@ export default function CheckoutPage() {
       };
 
       if (paymentMethod === 'cod') {
-        const { data } = await api.post('/orders/checkout', orderPayload);
+        await api.post('/orders/checkout', orderPayload);
         dispatch(clearCart());
         dispatch(showToast({ message: 'Order placed successfully!', type: 'success' }));
         navigate('/orders');
       } else {
-        const { data: orderData } = await api.post('/orders/checkout', orderPayload);
-        const { data: intentData } = await api.post('/payments/create-intent', { orderId: orderData.order._id });
+        // ── Online payment flow ──────────────────────────────────────────────
+        // Step 1: Create the app order. Pass an idempotency key so that if the
+        //         user accidentally double-taps, only one order is created.
+        const { data: orderData } = await api.post('/orders/checkout', {
+          ...orderPayload,
+          idempotencyKey: `checkout_${shopId}_${Date.now()}`,
+        });
+
+        // Step 2: Create the Razorpay order for this app order
+        const { data: intentData } = await api.post('/payments/create-intent', {
+          orderId: orderData.order._id,
+        });
+
+        // Step 3: Open Razorpay. If the user dismisses it, the app order stays
+        //         as 'pending' — the cron job will auto-cancel it after 30 min.
+        //         The user can go to Orders and see it labelled 'Payment Pending'.
         openRazorpay({
           key: import.meta.env.VITE_RAZORPAY_KEY_ID,
           amount: intentData.amount,
           currency: 'INR',
           name: 'OrangeBite',
-          order_id: intentData.razorpayOrderId,
+          order_id: intentData.orderId,
           handler: async (response) => {
-            // The Razorpay handler fires inside the SDK's own closure.
-            // Wrap in try/catch so a verify failure doesn't silently swallow the redirect.
             try {
               await api.post('/payments/verify', { orderId: orderData.order._id, ...response });
               dispatch(clearCart());
               dispatch(showToast({ message: 'Payment successful! Order placed.', type: 'success' }));
             } catch (_) {
-              // Verification failed — still redirect so user sees their order list
               dispatch(showToast({ message: 'Payment recorded. Please check your orders.', type: 'info' }));
             }
-            // Use window.location.href as the guaranteed redirect — navigate() can
-            // fail silently when called from inside the Razorpay SDK callback context.
             window.location.href = '/orders';
+          },
+          modal: {
+            ondismiss: () => {
+              dispatch(showToast({
+                message: 'Payment cancelled. Your order is saved — you can retry from My Orders.',
+                type: 'warning',
+                duration: 5000,
+              }));
+              navigate('/orders');
+            },
           },
           prefill: {},
           theme: { color: '#f97316' },
@@ -179,11 +201,11 @@ export default function CheckoutPage() {
         </div>
         <hr className="border-gray-100 mb-3" />
         <div className="space-y-2 text-sm">
-          <div className="flex justify-between text-gray-600"><span>Subtotal</span><span>₹{cartTotal}</span></div>
-          <div className="flex justify-between text-gray-600"><span>Platform fee</span><span>₹{platformFee}</span></div>
-          <div className="flex justify-between text-gray-600"><span>Delivery charge</span><span>₹{deliveryCharge}</span></div>
+          <div className="flex justify-between text-gray-600"><span>Subtotal</span><span>₹{cartTotal.toFixed(2)}</span></div>
+          <div className="flex justify-between text-gray-600"><span>Platform fee (10%)</span><span>₹{platformFee.toFixed(2)}</span></div>
+          <div className="flex justify-between text-gray-600"><span>Delivery charge</span><span>₹{deliveryCharge.toFixed(2)}</span></div>
           <hr className="border-gray-100" />
-          <div className="flex justify-between font-bold text-gray-900 text-base"><span>Total</span><span>₹{total}</span></div>
+          <div className="flex justify-between font-bold text-gray-900 text-base"><span>Total</span><span>₹{total.toFixed(2)}</span></div>
         </div>
       </div>
 
@@ -193,7 +215,7 @@ export default function CheckoutPage() {
         className="w-full bg-orange-500 hover:bg-orange-600 disabled:opacity-60 text-white font-bold py-4 rounded-2xl flex items-center justify-center gap-2 text-base transition-colors shadow-lg shadow-orange-200"
       >
         {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Check className="w-5 h-5" />}
-        {paymentMethod === 'cod' ? `Place Order • ₹${total}` : `Pay ₹${total}`}
+        {paymentMethod === 'cod' ? `Place Order • ₹${total.toFixed(2)}` : `Pay ₹${total.toFixed(2)}`}
       </button>
     </div>
   );

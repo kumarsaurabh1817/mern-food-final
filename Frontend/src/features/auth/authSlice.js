@@ -1,7 +1,6 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import api from '../../lib/axios';
-
-const TOKEN_KEY = 'ob_access_token';
+import { TOKEN_KEY } from '../../lib/constants';
 
 export const signIn = createAsyncThunk('auth/signIn', async (credentials, { rejectWithValue }) => {
   try {
@@ -18,7 +17,12 @@ export const signUp = createAsyncThunk('auth/signUp', async (payload, { rejectWi
     const { data } = await api.post('/auth/signup', payload);
     return data;
   } catch (err) {
-    return rejectWithValue(err.response?.data?.message || 'Signup failed');
+    const data = err.response?.data;
+    // If the backend returned per-field validation errors, pass them along
+    if (data?.errors && Array.isArray(data.errors) && data.errors.length > 0) {
+      return rejectWithValue({ message: data.message || 'Validation failed', fields: data.errors });
+    }
+    return rejectWithValue({ message: data?.message || 'Signup failed', fields: [] });
   }
 });
 

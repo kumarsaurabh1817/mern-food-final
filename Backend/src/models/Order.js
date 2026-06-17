@@ -42,7 +42,7 @@ const OrderSchema = new mongoose.Schema(
       required: true,
     },
     shop: { type: mongoose.Schema.Types.ObjectId, ref: "Shop", required: true },
-    deliveryAgent: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    deliveryAgent: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
     items: [OrderItemSchema],
     subtotal: { type: Number, required: true },
     platformFee: { type: Number, default: 0 },
@@ -85,7 +85,7 @@ const OrderSchema = new mongoose.Schema(
   { timestamps: true },
 );
 
-OrderSchema.index({ idempotencyKey: 1 });
+// NOTE: No manual index for idempotencyKey — the field-level unique:true already creates one.
 OrderSchema.index({ customer: 1 });
 OrderSchema.index({ shop: 1 });
 OrderSchema.index({ deliveryAgent: 1 });

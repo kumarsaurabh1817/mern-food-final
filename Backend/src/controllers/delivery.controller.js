@@ -1,6 +1,7 @@
 import Order from "../models/Order.js";
 import DeliveryProfile from "../models/DeliveryProfile.js";
 import { getIO } from "../socket/index.js";
+import mongoose from "mongoose";
 
 // NOTE: DeliveryProfile is lazily created on first access (GET /api/delivery/me).
 // This is intentional for now, but ideally this creation should be triggered once
@@ -71,12 +72,12 @@ export const getPool = async (req, res, next) => {
       });
     }
 
-    // FIX #4: Include 'confirmed' and 'preparing' statuses — orders the shop
-    // has accepted are the ones actually ready for pickup by agents.
-    // Only 'pending' was shown before, making confirmed/preparing invisible.
+    // Only show orders that are ready_for_pickup with no agent assigned,
+    // and that this specific agent has not already rejected.
+    // deliveryAgent must be explicitly null/undefined — NOT just missing.
     const poolOrders = await Order.find({
-      status: { $in: ["ready_for_pickup"] },
-      $or: [{ deliveryAgent: { $exists: false } }, { deliveryAgent: null }],
+      status: "ready_for_pickup",
+      deliveryAgent: null,           // strictly null — excludes any assigned orders
       _id: { $nin: profile.rejectedOrders },
     })
       .populate({
@@ -84,7 +85,8 @@ export const getPool = async (req, res, next) => {
         select: "name address isApproved isOpen isSuspended",
       })
       .populate("customer", "name")
-      .sort({ createdAt: 1 });
+      .sort({ createdAt: 1 })
+      .lean();                        // read-only — skip Mongoose document overhead
 
     // Filter out orders from unapproved or suspended shops
     const filteredOrders = poolOrders.filter(
@@ -184,20 +186,20 @@ export const rejectOrder = async (req, res, next) => {
   try {
     const { orderId } = req.params;
 
-    // FIX #24 & #25: Use a single atomic $push + $slice to cap the array at 200.
-    // This prevents unbounded growth which makes the $nin query in getPool slow.
-    // $slice: -200 keeps only the LAST 200 rejected order IDs.
+    // Add to rejectedOrders, capping array at 200 entries.
+    // Do NOT use upsert:true — the profile must already exist (created by getPool).
+    // If it doesn't exist, this silently no-ops, which is safe.
     await DeliveryProfile.findOneAndUpdate(
       { user: req.user.id, rejectedOrders: { $ne: orderId } }, // skip if already present
       {
         $push: {
           rejectedOrders: {
             $each: [orderId],
-            $slice: -200,
+            $slice: -200,           // keep only the last 200 rejections
           },
         },
       },
-      { upsert: true },
+      // upsert removed: profile must exist — prevents orphan profile creation
     );
 
     res.status(200).json({
@@ -241,13 +243,22 @@ export const releaseOrder = async (req, res, next) => {
     }
     // For confirmed / preparing states, status stays unchanged — just unassign agent
 
-    order.deliveryAgent = undefined;
+    order.deliveryAgent = null;    // explicitly null so $nin: rejectedOrders filter works
     await order.save();
 
-    // Remove from agent's rejectedOrders so it re-appears in the pool for others
+    // Add to THIS agent's rejectedOrders so the order doesn't bounce straight
+    // back into their own pool immediately after releasing.
+    // Other agents with empty rejectedOrders will still see it.
     await DeliveryProfile.findOneAndUpdate(
-      { user: req.user.id },
-      { $pull: { rejectedOrders: orderId } },
+      { user: req.user.id, rejectedOrders: { $ne: orderId } },
+      {
+        $push: {
+          rejectedOrders: {
+            $each: [orderId],
+            $slice: -200,
+          },
+        },
+      },
     );
 
     res.status(200).json({
@@ -264,38 +275,64 @@ export const releaseOrder = async (req, res, next) => {
 // @access  Delivery Boy
 export const getEarnings = async (req, res, next) => {
   try {
-    const DELIVERY_FEE = 5; // Fixed fee for demonstration
+    const DELIVERY_FEE = 5; // Fixed fee per delivery
 
-    const deliveredOrders = await Order.find({
-      deliveryAgent: req.user.id,
-      status: "delivered",
-    }).sort({ updatedAt: -1 });
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
 
-    const totalEarnings = deliveredOrders.length * DELIVERY_FEE;
+    // Single aggregation — no in-memory document loading
+    const [summary] = await Order.aggregate([
+      {
+        $match: {
+          deliveryAgent: new mongoose.Types.ObjectId(req.user.id),
+          status: "delivered",
+        },
+      },
+      {
+        $facet: {
+          totals: [
+            {
+              $group: {
+                _id: null,
+                totalDeliveries: { $sum: 1 },
+              },
+            },
+          ],
+          today: [
+            { $match: { updatedAt: { $gte: startOfToday } } },
+            { $count: "count" },
+          ],
+          byDay: [
+            {
+              $group: {
+                _id: { $dateToString: { format: "%Y-%m-%d", date: "$updatedAt" } },
+                count: { $sum: 1 },
+              },
+            },
+            { $sort: { _id: -1 } },
+            { $limit: 30 }, // last 30 days
+          ],
+        },
+      },
+    ]);
 
+    const totalDeliveries = summary?.totals?.[0]?.totalDeliveries || 0;
+    const todayCount = summary?.today?.[0]?.count || 0;
     const dailyBreakdown = {};
 
-    deliveredOrders.forEach((order) => {
-      const dateObj = new Date(order.updatedAt);
-      const dateStr = dateObj.toISOString().split("T")[0];
-
-      if (!dailyBreakdown[dateStr]) {
-        dailyBreakdown[dateStr] = { count: 0, earnings: 0 };
-      }
-      dailyBreakdown[dateStr].count += 1;
-      dailyBreakdown[dateStr].earnings += DELIVERY_FEE;
+    (summary?.byDay || []).forEach((row) => {
+      dailyBreakdown[row._id] = {
+        count: row.count,
+        earnings: row.count * DELIVERY_FEE,
+      };
     });
 
     res.status(200).json({
       success: true,
-      totalEarnings,
-      totalDeliveries: deliveredOrders.length,
+      totalEarnings: totalDeliveries * DELIVERY_FEE,
+      totalDeliveries,
+      todayEarnings: todayCount * DELIVERY_FEE,
       dailyBreakdown,
-      history: deliveredOrders.map((o) => ({
-        orderId: o._id,
-        date: o.updatedAt,
-        fee: DELIVERY_FEE,
-      })),
     });
   } catch (error) {
     next(error);

@@ -6,6 +6,7 @@ import { useDispatch } from 'react-redux';
 import { showToast } from '../../features/ui/uiSlice';
 import { useSelector } from 'react-redux';
 import { selectUser } from '../../features/auth/authSlice';
+import { TOKEN_KEY } from '../../lib/constants';
 
 // Consistent status badge colors
 const STATUS_BADGE = {
@@ -53,13 +54,20 @@ export default function OwnerOrdersPage() {
 
   useEffect(() => {
     fetchOrders();
-    const socket = io(import.meta.env.VITE_API_URL || 'http://localhost:5000', { withCredentials: true });
+    const token = localStorage.getItem(TOKEN_KEY) || '';
+    const socket = io(import.meta.env.VITE_API_URL || 'http://localhost:5000', {
+      withCredentials: true,
+      auth: { token },
+    });
     socketRef.current = socket;
-    socket.emit('joinOwnerRoom');
+    socket.on('connect', () => {
+      // Pass the actual user ID so the server puts us in the right room
+      if (user?.id) socket.emit('joinOwnerRoom', user.id);
+    });
     socket.on('newOrder', () => fetchOrders());
     socket.on('orderStatusUpdated', () => fetchOrders());
     return () => socket.disconnect();
-  }, []);
+  }, [user?.id]);
 
   const handleAction = async (order, route) => {
     setActioning(order._id);
