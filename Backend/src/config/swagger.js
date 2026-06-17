@@ -52,6 +52,16 @@ const swaggerOptions = {
 	],
 };
 
-const swaggerSpec = swaggerJsdoc(swaggerOptions);
+const rawSpec = swaggerJsdoc(swaggerOptions);
+
+// The JSDoc comments use /api/... prefixes for readability, but Express mounts
+// the routers without that prefix (e.g. app.use("/auth", ...)).
+// Strip the leading /api from every path key so Swagger UI hits the real URLs.
+const strippedPaths = {};
+for (const [path, value] of Object.entries(rawSpec.paths || {})) {
+	strippedPaths[path.replace(/^\/api/, "")] = value;
+}
+
+const swaggerSpec = { ...rawSpec, paths: strippedPaths };
 
 export default swaggerSpec;
