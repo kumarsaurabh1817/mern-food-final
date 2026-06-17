@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { CheckCircle, ChefHat, Package, Clock, RefreshCw, Loader2, Banknote, CreditCard, ArrowRight } from 'lucide-react';
+import { CheckCircle, ChefHat, Package, Clock, RefreshCw, Loader2, Banknote, CreditCard, ArrowRight, AlertCircle } from 'lucide-react';
 import api from '../../lib/axios';
 import { io } from 'socket.io-client';
 import { useDispatch } from 'react-redux';
@@ -123,20 +123,28 @@ export default function OwnerOrdersPage() {
           {filteredOrders.map((order) => {
             const badgeClass = STATUS_BADGE[order.status] || 'bg-gray-50 text-gray-600 border-gray-200';
             const statusLabel = STATUS_LABEL[order.status] || order.status;
-            const nextAction = NEXT_ACTION[order.status];
             const isCOD = order.paymentMethod === 'cod';
+            // An online order whose payment was cancelled/not completed must NOT
+            // be actionable by the owner — the customer hasn't paid yet.
+            const isOnlineUnpaid = !isCOD && order.paymentStatus !== 'paid';
+            // Only show the next-action button when payment is resolved.
+            const nextAction = isOnlineUnpaid ? null : NEXT_ACTION[order.status];
 
             return (
-              <div key={order._id} className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm">
+              <div key={order._id} className={`bg-white rounded-2xl border p-5 shadow-sm ${
+                isOnlineUnpaid ? 'border-red-100 opacity-80' : 'border-gray-100'
+              }`}>
                 {/* Header */}
                 <div className="flex items-start justify-between gap-4 mb-3">
                   <div>
                     <div className="flex items-center gap-2 flex-wrap">
                       <p className="font-bold text-gray-900">Order #{order._id.slice(-6).toUpperCase()}</p>
                       {/* Payment method badge */}
-                      <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full ${isCOD ? 'bg-amber-50 text-amber-700' : 'bg-indigo-50 text-indigo-700'}`}>
+                      <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full ${
+                        isCOD ? 'bg-amber-50 text-amber-700' : 'bg-indigo-50 text-indigo-700'
+                      }`}>
                         {isCOD ? <Banknote className="w-3 h-3" /> : <CreditCard className="w-3 h-3" />}
-                        {isCOD ? 'Cash on Delivery' : 'Paid Online'}
+                        {isCOD ? 'Cash on Delivery' : 'Online Payment'}
                       </span>
                     </div>
                     <p className="text-xs text-gray-400 flex items-center gap-1 mt-0.5">
@@ -165,7 +173,7 @@ export default function OwnerOrdersPage() {
                     <p className="font-bold text-gray-900 mt-0.5">₹{order.totalAmount}</p>
                   </div>
 
-                  {/* Single consistent action button for all active statuses */}
+                  {/* Action button — only for orders with completed payment */}
                   {nextAction && (
                     <button
                       onClick={() => handleAction(order, nextAction.route)}
@@ -179,6 +187,14 @@ export default function OwnerOrdersPage() {
                     </button>
                   )}
                 </div>
+
+                {/* Payment not completed — owner must not prepare this order */}
+                {isOnlineUnpaid && (
+                  <p className="mt-3 text-xs text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-1.5 flex items-center gap-1.5">
+                    <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+                    Payment not completed by customer. Do not prepare this order — it will be auto-cancelled shortly.
+                  </p>
+                )}
 
                 {/* COD info note for pending-skipped orders */}
                 {order.status === 'confirmed' && isCOD && (

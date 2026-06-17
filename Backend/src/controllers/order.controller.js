@@ -576,6 +576,17 @@ export const confirmOrder = async (req, res, next) => {
         message: `Cannot confirm an order with status '${order.status}'`,
       });
 
+    // Block confirmation if the customer's online payment has not been completed.
+    // When a Razorpay payment is cancelled/dismissed the order stays as
+    // status='pending' + paymentStatus='pending'. The owner must NOT be able
+    // to confirm such an order — it would fulfil an unpaid order.
+    if (order.paymentMethod === "online" && order.paymentStatus !== "paid") {
+      return res.status(400).json({
+        success: false,
+        message: "Cannot confirm this order — payment has not been completed by the customer.",
+      });
+    }
+
     const shop = await Shop.findOne({ owner: req.user.id });
     if (!shop || order.shop.toString() !== shop._id.toString())
       return res
