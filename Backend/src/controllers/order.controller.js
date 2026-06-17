@@ -408,7 +408,9 @@ export const checkout = async (req, res, next) => {
       totalAmount,
       deliveryAddress,
       paymentMethod,
-      paymentStatus: "pending",
+      // COD orders are "committed" to payment \u2014 mark as paid immediately.
+      // Online orders start as 'pending' until Razorpay confirms the payment.
+      paymentStatus: paymentMethod === 'cod' ? 'paid' : 'pending',
       status: initialStatus,
       deliveryOTP: rawOTP,
       // deliveryOTP (plain) is returned to customers and never exposed to other roles

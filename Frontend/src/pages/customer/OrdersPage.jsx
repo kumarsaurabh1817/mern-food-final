@@ -23,9 +23,13 @@ const STATUS_LABELS = {
   delivered: 'Delivered', cancelled: 'Cancelled',
 };
 
-// An order is "payment abandoned" when the customer opened Razorpay but never paid.
+// Detect payment-abandoned orders.
+// COD orders go straight to status:'confirmed' on creation — they are NEVER 'pending'.
+// Any order that has status:'pending' AND paymentStatus:'pending' is therefore an
+// online payment that the customer did not complete.
+// We don't require paymentMethod === 'online' because old orders may not have the field.
 const isPaymentPending = (order) =>
-  order.paymentMethod === 'online' && order.paymentStatus === 'pending' && order.status === 'pending';
+  order.status === 'pending' && (order.paymentStatus === 'pending' || !order.paymentStatus);
 
 export default function OrdersPage() {
   const navigate = useNavigate();
