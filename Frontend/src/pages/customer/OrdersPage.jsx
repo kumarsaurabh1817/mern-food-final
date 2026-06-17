@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Package, ChevronRight, Clock, XCircle } from 'lucide-react';
+import { Package, ChevronRight, Clock, XCircle, CreditCard, RefreshCw, AlertTriangle } from 'lucide-react';
 import api from '../../lib/axios';
 import { useDispatch } from 'react-redux';
 import { showToast } from '../../features/ui/uiSlice';
+import { clearCart } from '../../features/cart/cartSlice';
+import { useRazorpay } from '../../hooks/useRazorpay';
 
 const STATUS_COLORS = {
   pending:          'bg-amber-50 text-amber-600 border-amber-200',
@@ -21,16 +23,23 @@ const STATUS_LABELS = {
   delivered: 'Delivered', cancelled: 'Cancelled',
 };
 
-const CANCELLABLE = ['pending'];
+// An order is "payment abandoned" when the customer opened Razorpay but never paid.
+const isPaymentPending = (order) =>
+  order.paymentMethod === 'online' && order.paymentStatus === 'pending' && order.status === 'pending';
 
 export default function OrdersPage() {
   const navigate = useNavigate();
   const dispatch = useDispatch();
+  const { openRazorpay } = useRazorpay();
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [retrying, setRetrying] = useState(null); // orderId currently being retried
 
   const fetchOrders = () => {
-    api.get('/orders').then(({ data }) => setOrders(data.orders || data || [])).catch(() => {}).finally(() => setLoading(false));
+    api.get('/orders')
+      .then(({ data }) => setOrders(data.orders || data || []))
+      .catch(() => {})
+      .finally(() => setLoading(false));
   };
 
   useEffect(() => { fetchOrders(); }, []);
@@ -43,6 +52,47 @@ export default function OrdersPage() {
       fetchOrders();
     } catch (err) {
       dispatch(showToast({ message: err.response?.data?.message || 'Cannot cancel order', type: 'error' }));
+    }
+  };
+
+  // Re-opens Razorpay for an order that was created but never paid.
+  const handleRetryPayment = async (order, e) => {
+    e.stopPropagation();
+    setRetrying(order._id);
+    try {
+      // /payments/create-intent accepts an existing orderId and returns a fresh Razorpay order
+      const { data: intentData } = await api.post('/payments/create-intent', { orderId: order._id });
+
+      openRazorpay({
+        key: import.meta.env.VITE_RAZORPAY_KEY_ID,
+        amount: intentData.amount,
+        currency: 'INR',
+        name: 'OrangeBite',
+        order_id: intentData.orderId,
+        handler: async (response) => {
+          try {
+            await api.post('/payments/verify', { orderId: order._id, ...response });
+            dispatch(clearCart());
+            dispatch(showToast({ message: 'Payment successful! Order confirmed.', type: 'success' }));
+          } catch (_) {
+            dispatch(showToast({ message: 'Payment recorded. Please check your orders.', type: 'info' }));
+          }
+          fetchOrders();
+        },
+        modal: {
+          ondismiss: () => {
+            dispatch(showToast({ message: 'Payment cancelled. You can retry anytime.', type: 'warning' }));
+          },
+        },
+        prefill: {},
+        theme: { color: '#f97316' },
+      });
+    } catch (err) {
+      // Order may have been auto-cancelled by the cron job (30-min timeout)
+      dispatch(showToast({ message: err.response?.data?.message || 'Unable to retry payment. Order may have expired.', type: 'error' }));
+      fetchOrders();
+    } finally {
+      setRetrying(null);
     }
   };
 
@@ -79,53 +129,120 @@ export default function OrdersPage() {
         </div>
       ) : (
         <div className="space-y-4">
-          {orders.map((order) => (
-            <div
-              key={order._id}
-              onClick={() => navigate(`/track/${order._id}`)}
-              className="bg-white rounded-2xl border border-gray-100 p-5 cursor-pointer hover:shadow-md transition-all shadow-sm"
-            >
-              <div className="flex items-start justify-between gap-4 mb-3">
-                <div>
-                  <p className="font-bold text-gray-900">{order.shop?.name || 'Restaurant'}</p>
-                  <p className="text-xs text-gray-400 mt-0.5">
-                    <Clock className="w-3 h-3 inline mr-1" />
-                    {new Date(order.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+          {orders.map((order) => {
+            const paymentPending = isPaymentPending(order);
+
+            // ── PAYMENT PENDING CARD ──────────────────────────────────────────
+            // Shown when the customer opened Razorpay but closed it without paying.
+            if (paymentPending) {
+              return (
+                <div key={order._id} className="bg-amber-50 border-2 border-amber-200 rounded-2xl p-5 shadow-sm">
+                  {/* Header */}
+                  <div className="flex items-start justify-between gap-4 mb-3">
+                    <div>
+                      <p className="font-bold text-gray-900">{order.shop?.name || 'Restaurant'}</p>
+                      <p className="text-xs text-gray-400 mt-0.5">
+                        <Clock className="w-3 h-3 inline mr-1" />
+                        {new Date(order.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                      </p>
+                    </div>
+                    {/* Distinct amber "Payment Pending" badge */}
+                    <span className="flex-shrink-0 flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full border bg-amber-100 text-amber-700 border-amber-300">
+                      <AlertTriangle className="w-3 h-3" />
+                      Payment Pending
+                    </span>
+                  </div>
+
+                  {/* Items */}
+                  <p className="text-sm text-gray-500 mb-3 line-clamp-1">
+                    {order.items?.map((i) => `${i.name} ×${i.quantity}`).join(', ')}
                   </p>
+
+                  {/* Warning message */}
+                  <div className="bg-white border border-amber-200 rounded-xl px-4 py-3 mb-4 flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
+                    <p className="text-xs text-amber-700 leading-relaxed">
+                      Your payment was not completed. This order is <strong>reserved</strong> but will be
+                      automatically cancelled if payment is not made within 30 minutes.
+                    </p>
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex items-center justify-between">
+                    <p className="font-bold text-gray-900">₹{order.totalAmount?.toFixed(2)}</p>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={(e) => handleCancel(order._id, e)}
+                        className="flex items-center gap-1 text-xs text-red-500 border border-red-200 px-2.5 py-1.5 rounded-full hover:bg-red-50 transition-colors"
+                      >
+                        <XCircle className="w-3 h-3" /> Cancel
+                      </button>
+                      <button
+                        onClick={(e) => handleRetryPayment(order, e)}
+                        disabled={retrying === order._id}
+                        className="flex items-center gap-1.5 text-xs font-semibold bg-orange-500 hover:bg-orange-600 disabled:opacity-60 text-white px-3 py-1.5 rounded-full transition-colors shadow-sm shadow-orange-200"
+                      >
+                        {retrying === order._id
+                          ? <RefreshCw className="w-3 h-3 animate-spin" />
+                          : <CreditCard className="w-3 h-3" />}
+                        Retry Payment
+                      </button>
+                    </div>
+                  </div>
                 </div>
-                <span className={`flex-shrink-0 text-xs font-semibold px-2.5 py-1 rounded-full border ${STATUS_COLORS[order.status] || 'bg-gray-50 text-gray-600 border-gray-200'}`}>
-                  {STATUS_LABELS[order.status] || order.status}
-                </span>
-              </div>
+              );
+            }
 
-              <p className="text-sm text-gray-500 mb-3 line-clamp-1">
-                {order.items?.map((i) => `${i.name} ×${i.quantity}`).join(', ')}
-              </p>
-
-              <div className="flex items-center justify-between">
-                <p className="font-bold text-gray-900">₹{order.totalAmount}</p>
-                <div className="flex items-center gap-2">
-                  {CANCELLABLE.includes(order.status) && (
-                    <button
-                      onClick={(e) => handleCancel(order._id, e)}
-                      className="flex items-center gap-1 text-xs text-red-500 border border-red-200 px-2.5 py-1 rounded-full hover:bg-red-50"
-                    >
-                      <XCircle className="w-3 h-3" /> Cancel
-                    </button>
-                  )}
-                  <span className="flex items-center gap-1 text-xs text-orange-500 font-medium">
-                    {order.status === 'out_for_delivery' ? (
-                      <>
-                        <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
-                        Live Track
-                      </>
-                    ) : 'Track'}
-                    <ChevronRight className="w-3 h-3" />
+            // ── NORMAL ORDER CARD ─────────────────────────────────────────────
+            return (
+              <div
+                key={order._id}
+                onClick={() => navigate(`/track/${order._id}`)}
+                className="bg-white rounded-2xl border border-gray-100 p-5 cursor-pointer hover:shadow-md transition-all shadow-sm"
+              >
+                <div className="flex items-start justify-between gap-4 mb-3">
+                  <div>
+                    <p className="font-bold text-gray-900">{order.shop?.name || 'Restaurant'}</p>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      <Clock className="w-3 h-3 inline mr-1" />
+                      {new Date(order.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                    </p>
+                  </div>
+                  <span className={`flex-shrink-0 text-xs font-semibold px-2.5 py-1 rounded-full border ${STATUS_COLORS[order.status] || 'bg-gray-50 text-gray-600 border-gray-200'}`}>
+                    {STATUS_LABELS[order.status] || order.status}
                   </span>
                 </div>
+
+                <p className="text-sm text-gray-500 mb-3 line-clamp-1">
+                  {order.items?.map((i) => `${i.name} ×${i.quantity}`).join(', ')}
+                </p>
+
+                <div className="flex items-center justify-between">
+                  <p className="font-bold text-gray-900">₹{order.totalAmount}</p>
+                  <div className="flex items-center gap-2">
+                    {/* Only show Cancel on COD pending — never on payment-pending (handled above) */}
+                    {order.status === 'pending' && order.paymentStatus !== 'pending' && (
+                      <button
+                        onClick={(e) => handleCancel(order._id, e)}
+                        className="flex items-center gap-1 text-xs text-red-500 border border-red-200 px-2.5 py-1 rounded-full hover:bg-red-50"
+                      >
+                        <XCircle className="w-3 h-3" /> Cancel
+                      </button>
+                    )}
+                    <span className="flex items-center gap-1 text-xs text-orange-500 font-medium">
+                      {order.status === 'out_for_delivery' ? (
+                        <>
+                          <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+                          Live Track
+                        </>
+                      ) : 'Track'}
+                      <ChevronRight className="w-3 h-3" />
+                    </span>
+                  </div>
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
