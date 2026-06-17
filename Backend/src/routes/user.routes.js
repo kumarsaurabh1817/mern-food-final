@@ -190,8 +190,37 @@ router.post("/me/addresses", addAddress);
 router.patch("/me/addresses/:id", updateAddress);
 router.delete("/me/addresses/:id", removeAddress);
 
-// Change password (requires current password verification)
-// Note: verifyToken is already applied to ALL routes in this router via router.use(verifyToken) above
+/**
+ * @swagger
+ * /api/users/me/change-password:
+ *   post:
+ *     tags: [Users]
+ *     summary: Change the current user's password (requires current password)
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [currentPassword, newPassword]
+ *             properties:
+ *               currentPassword:
+ *                 type: string
+ *                 example: OldPass@123
+ *               newPassword:
+ *                 type: string
+ *                 example: NewPass@456
+ *     responses:
+ *       200:
+ *         description: Password changed - all other sessions revoked
+ *       400:
+ *         description: Weak new password or same as current
+ *       401:
+ *         description: Current password incorrect
+ */
 router.post("/me/change-password", changePassword);
+
 
 export default router;
