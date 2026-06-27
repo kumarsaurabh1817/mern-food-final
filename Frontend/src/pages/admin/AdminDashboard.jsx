@@ -1,14 +1,17 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { TrendingUp, Users, Store, ShoppingBag, DollarSign, Clock, BarChart2, AlertCircle, ArrowUpRight } from 'lucide-react';
 import api from '../../lib/axios';
+import { getSocket } from '../../lib/socket';
+import LiveDot from '../../components/ui/LiveDot';
 
 export default function AdminDashboard() {
   const [kpis, setKpis] = useState(null);
   const [revenue, setRevenue] = useState(null);
   const [loading, setLoading] = useState(true);
+  const debounceRef = useRef(null);
 
-  useEffect(() => {
+  const fetchDashboard = () => {
     Promise.all([
       api.get('/admin/dashboard'),
       api.get('/admin/revenue'),
@@ -17,6 +20,30 @@ export default function AdminDashboard() {
       setKpis(kpiRes.data.data || kpiRes.data);
       setRevenue(revRes.data.data || revRes.data);
     }).catch(() => {}).finally(() => setLoading(false));
+  };
+
+  useEffect(() => { fetchDashboard(); }, []);
+
+  // ── Real-time: refresh platform metrics on any order event (debounced) ──────
+  useEffect(() => {
+    const socket = getSocket();
+    const join = () => socket.emit('joinAdminRoom');
+    socket.on('connect', join);
+    if (socket.connected) join();
+
+    const refresh = () => {
+      clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(fetchDashboard, 800);
+    };
+    socket.on('order:new', refresh);
+    socket.on('order:update', refresh);
+
+    return () => {
+      clearTimeout(debounceRef.current);
+      socket.off('connect', join);
+      socket.off('order:new', refresh);
+      socket.off('order:update', refresh);
+    };
   }, []);
 
   const kpiCards = kpis ? [
@@ -91,7 +118,10 @@ export default function AdminDashboard() {
     <div>
       {/* Page header */}
       <div className="mb-6">
-        <h1 className="text-2xl font-black text-gray-900">Platform Overview</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-2xl font-black text-gray-900">Platform Overview</h1>
+          <LiveDot />
+        </div>
         <p className="text-gray-400 text-sm mt-1">Real-time metrics for OrangeBite</p>
       </div>
 

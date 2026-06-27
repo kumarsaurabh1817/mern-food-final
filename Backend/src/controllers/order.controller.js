@@ -1,26 +1,18 @@
 import Order from "../models/Order.js";
 import Shop from "../models/Shop.js";
-import { getIO, deleteAgentLocationCache } from "../socket/index.js";
+import {
+  getIO,
+  deleteAgentLocationCache,
+  emitOrderUpdate,
+  emitNewOrder,
+  emitPoolAdd,
+  emitPoolRemove,
+} from "../socket/index.js";
 import MenuItem from "../models/MenuItem.js";
 import crypto from "crypto";
 import bcrypt from "bcrypt";
+import { haversineDistanceKm } from "../utils/helper.js";
 
-/**
- * Haversine formula — returns the great-circle distance in km
- * between two lat/lng points.
- */
-function haversineDistanceKm(lat1, lng1, lat2, lng2) {
-  const R = 6371; // Earth radius in km
-  const dLat = ((lat2 - lat1) * Math.PI) / 180;
-  const dLng = ((lng2 - lng1) * Math.PI) / 180;
-  const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos((lat1 * Math.PI) / 180) *
-      Math.cos((lat2 * Math.PI) / 180) *
-      Math.sin(dLng / 2) *
-      Math.sin(dLng / 2);
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
 
 export const getOrderAnalytics = async (req, res, next) => {
   try {
@@ -423,6 +415,12 @@ export const checkout = async (req, res, next) => {
       client_secret: `secret_mock_${crypto.randomBytes(8).toString("hex")}`,
     };
 
+    // ── Real-time: notify the shop owner a new order just landed ──────────────
+    // COD orders are immediately actionable (status 'confirmed'); online orders
+    // are 'pending' until payment is verified, but the owner still sees them.
+    emitNewOrder(order, shop.owner);
+    emitOrderUpdate(order, { ownerId: shop.owner });
+
     // deliveryOTP is returned here and also stored for customer history views.
     res
       .status(201)
@@ -597,14 +595,8 @@ export const confirmOrder = async (req, res, next) => {
     order.preparationTime = preparationTime;
     await order.save();
 
-    // Notify the customer's tracking page in real-time
-    try {
-      const io = getIO();
-      io.to(`order_${order._id}`).emit("order:status", {
-        orderId: order._id,
-        status: "confirmed",
-      });
-    } catch (_) { /* socket not critical */ }
+    // Notify customer (tracking page + order list) and owner dashboard live.
+    emitOrderUpdate(order, { ownerId: req.user.id });
 
     res.status(200).json({ success: true, order });
   } catch (error) {
@@ -640,6 +632,10 @@ export const markPreparing = async (req, res, next) => {
 
     order.status = "preparing";
     await order.save();
+
+    // Real-time: customer's tracker advances to "Preparing"; owner stays in sync.
+    emitOrderUpdate(order, { ownerId: req.user.id });
+
     res.status(200).json({ success: true, order });
   } catch (error) {
     next(error);
@@ -674,6 +670,16 @@ export const markReady = async (req, res, next) => {
 
     order.status = "ready_for_pickup";
     await order.save();
+
+    // Real-time: customer tracker + owner update; the order also enters the
+    // delivery pool so online agents see it instantly (no manual refresh).
+    emitOrderUpdate(order, { ownerId: req.user.id });
+    const poolOrder = await Order.findById(order._id)
+      .populate("shop", "name address isApproved isOpen isSuspended")
+      .populate("customer", "name")
+      .lean();
+    emitPoolAdd(poolOrder || order);
+
     res.status(200).json({ success: true, order });
   } catch (error) {
     next(error);
@@ -718,18 +724,23 @@ export const cancelOrder = async (req, res, next) => {
     // Evict the cached agent location — order is cancelled
     deleteAgentLocationCache(order._id);
 
-    // ── Real-time: push cancellation to customer's tracking page instantly ──
+    // ── Real-time: keep customer, owner and pool in sync ────────────────────
+    const ownerId = order.shop?.owner;
+    emitOrderUpdate(order, { ownerId });
+    emitPoolRemove(order._id);
+    // Dedicated cancellation event (drives the toast + redirect on the client)
     try {
-      const io = getIO();
-      io.to(`order_${order._id}`).emit("order:cancelled", {
-        orderId: order._id,
-        cancelledBy: isShopOwner ? "owner" : isAdmin ? "admin" : "customer",
-        message: isShopOwner
-          ? "Your order was cancelled by the restaurant."
-          : isAdmin
-            ? "Your order was cancelled by admin."
-            : "Order cancelled.",
-      });
+      getIO()
+        .to(`order_${order._id}`)
+        .emit("order:cancelled", {
+          orderId: order._id,
+          cancelledBy: isShopOwner ? "owner" : isAdmin ? "admin" : "customer",
+          message: isShopOwner
+            ? "Your order was cancelled by the restaurant."
+            : isAdmin
+              ? "Your order was cancelled by admin."
+              : "Order cancelled.",
+        });
     } catch (_) {
       /* socket not critical — order is already saved */
     }
@@ -793,6 +804,11 @@ export const verifyDeliveryOtp = async (req, res, next) => {
 
     // Evict the cached agent location — order is complete
     deleteAgentLocationCache(req.params.id);
+
+    // Real-time: flip status to "Delivered" for customer + owner, drop from pool.
+    const shopForOwner = await Shop.findById(order.shop).select("owner");
+    emitOrderUpdate(order, { ownerId: shopForOwner?.owner });
+    emitPoolRemove(order._id);
 
     res.status(200).json({ success: true, order });
   } catch (error) {

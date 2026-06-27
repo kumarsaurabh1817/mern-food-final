@@ -6,6 +6,15 @@ import api from '../../lib/axios';
 import { selectCartItems, selectCartTotal, selectCartShopId, clearCart } from '../../features/cart/cartSlice';
 import { showToast } from '../../features/ui/uiSlice';
 import { useRazorpay } from '../../hooks/useRazorpay';
+import AddressPicker from '../../components/map/AddressPicker';
+
+// Pick the first standard label that isn't already taken, then fall back to a
+// unique custom label so a new address never collides with an existing one.
+const nextLabel = (addresses = []) => {
+  const used = new Set(addresses.map((a) => (a.label || '').toLowerCase()));
+  const free = ['Home', 'Work', 'Other'].find((l) => !used.has(l.toLowerCase()));
+  return free || `Address ${addresses.length + 1}`;
+};
 
 export default function CheckoutPage() {
   const dispatch = useDispatch();
@@ -20,7 +29,7 @@ export default function CheckoutPage() {
   const [selectedAddress, setSelectedAddress] = useState(null);
   const [paymentMethod, setPaymentMethod] = useState('cod');
   const [loading, setLoading] = useState(false);
-  const [addressForm, setAddressForm] = useState({ show: false, label: '', street: '', city: '', state: '', zipCode: '' });
+  const [addressForm, setAddressForm] = useState({ show: false, label: '', street: '', city: '', state: '', zipCode: '', lat: null, lng: null });
 
   // These match the backend formulas exactly so the displayed total === what is charged.
   // Backend: platformFee = subtotal * 0.1 (float), deliveryCharge = 5 (fixed)
@@ -42,26 +51,55 @@ export default function CheckoutPage() {
   const handleAddAddress = async (e) => {
     e.preventDefault();
     try {
-      const { data } = await api.post('/users/me/addresses', addressForm);
+      // Ensure a unique label — the backend rejects a second Home/Work/Other.
+      const payload = { ...addressForm, label: addressForm.label?.trim() || nextLabel(addresses) };
+      const { data } = await api.post('/users/me/addresses', payload);
       const list = data.addresses || [];
       setAddresses(list);
       const newAddr = list[list.length - 1];
       if (newAddr) setSelectedAddress(newAddr._id);
-      setAddressForm({ show: false, label: '', street: '', city: '', state: '', zipCode: '' });
+      setAddressForm({ show: false, label: '', street: '', city: '', state: '', zipCode: '', lat: null, lng: null });
+      dispatch(showToast({ message: 'Address added!', type: 'success' }));
     } catch (err) {
-      dispatch(showToast({ message: 'Failed to add address', type: 'error' }));
+      dispatch(showToast({ message: err.response?.data?.message || 'Failed to add address', type: 'error' }));
     }
   };
+
+  // Best-effort browser geolocation so the delivery destination has coordinates
+  // for live map tracking + the radius check. Resolves to null if denied/timeout
+  // — the order still goes through, the map just degrades to agent-only.
+  const getCurrentCoords = () =>
+    new Promise((resolve) => {
+      if (!navigator.geolocation) return resolve(null);
+      navigator.geolocation.getCurrentPosition(
+        (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+        () => resolve(null),
+        { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 }
+      );
+    });
 
   const placeOrder = async () => {
     if (!selectedAddress) { dispatch(showToast({ message: 'Please select a delivery address', type: 'warning' })); return; }
     setLoading(true);
     const address = addresses.find((a) => a._id === selectedAddress);
     try {
+      // Prefer the coordinates saved with the address (dropped on the map at
+      // creation time); only fall back to live geolocation if absent.
+      const savedCoords =
+        Number.isFinite(address?.lat) && Number.isFinite(address?.lng)
+          ? { lat: address.lat, lng: address.lng }
+          : null;
+      const coords = savedCoords || (await getCurrentCoords());
       const orderPayload = {
         shopId,
         items: cartItems.map((i) => ({ menuItemId: i._id, quantity: i.quantity })),
-        deliveryAddress: { street: address.street, city: address.city, state: address.state, zipCode: address.zipCode },
+        deliveryAddress: {
+          street: address.street,
+          city: address.city,
+          state: address.state,
+          zipCode: address.zipCode,
+          ...(coords || {}),
+        },
         paymentMethod,
       };
 
@@ -151,6 +189,18 @@ export default function CheckoutPage() {
         {addressForm.show ? (
           <form onSubmit={handleAddAddress} className="space-y-3 border border-gray-100 rounded-xl p-4">
             <h3 className="font-semibold text-sm text-gray-800">New address</h3>
+            <AddressPicker
+              value={addressForm.lat != null ? { lat: addressForm.lat, lng: addressForm.lng } : null}
+              onPick={(a) => setAddressForm((prev) => ({
+                ...prev,
+                lat: a.lat,
+                lng: a.lng,
+                street: a.street || prev.street,
+                city: a.city || prev.city,
+                state: a.state || prev.state,
+                zipCode: a.zipCode || prev.zipCode,
+              }))}
+            />
             <div className="grid grid-cols-2 gap-3">
               <input placeholder="Label (Home, Work...)" value={addressForm.label} onChange={(e) => setAddressForm({ ...addressForm, label: e.target.value })} className="col-span-2 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-orange-400" />
               <input placeholder="Street address" value={addressForm.street} onChange={(e) => setAddressForm({ ...addressForm, street: e.target.value })} required className="col-span-2 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-orange-400" />

@@ -1,45 +1,18 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
+import { useDispatch } from 'react-redux';
 import { Package, CheckCircle, ChevronLeft, Navigation, Loader2, Store, MapPin } from 'lucide-react';
 import api from '../../lib/axios';
-import { io } from 'socket.io-client';
-import { TOKEN_KEY } from '../../lib/constants';
-import 'leaflet/dist/leaflet.css';
-import L from 'leaflet';
-
-delete L.Icon.Default.prototype._getIconUrl;
-L.Icon.Default.mergeOptions({
-  iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png',
-  iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png',
-  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
-});
-
-const agentIcon = new L.Icon({
-  iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-orange.png',
-  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
-  iconSize: [25, 41], iconAnchor: [12, 41], popupAnchor: [1, -34], shadowSize: [41, 41],
-});
-
-const STATUS_STEPS = [
-  { key: 'pending',          label: 'Order Placed' },
-  { key: 'confirmed',        label: 'Confirmed' },
-  { key: 'preparing',        label: 'Preparing' },
-  { key: 'ready_for_pickup', label: 'Ready' },
-  { key: 'out_for_delivery', label: 'On the way' },
-  { key: 'delivered',        label: 'Delivered' },
-];
-
-function MapUpdater({ position }) {
-  const map = useMap();
-  useEffect(() => { if (position) map.setView(position, 15, { animate: true }); }, [position, map]);
-  return null;
-}
-
+import { getSocket } from '../../lib/socket';
+import { showToast } from '../../features/ui/uiSlice';
+import { STATUS_STEPS, statusStepIndex } from '../../lib/orderStatus';
+import { addressToLatLng, shopToLatLng, haversineDistanceKm, etaMinutes, formatDistance } from '../../lib/geo';
+import LiveMap from '../../components/map/LiveMap';
 
 export default function OrderTrackingPage() {
   const { orderId } = useParams();
   const navigate = useNavigate();
+  const dispatch = useDispatch();
   const [order, setOrder] = useState(null);
   const [agentPos, setAgentPos] = useState(null);
   const [mapReady, setMapReady] = useState(false);
@@ -60,38 +33,60 @@ export default function OrderTrackingPage() {
     // Don't connect the socket until we know orderId is valid
     if (!orderId || !/^[a-f\d]{24}$/i.test(orderId)) return;
 
-    const token = localStorage.getItem(TOKEN_KEY) || '';
-    const socket = io(import.meta.env.VITE_API_URL || 'http://localhost:5000', {
-      withCredentials: true,
-      auth: { token },
-    });
+    const socket = getSocket();
     socketRef.current = socket;
 
-    socket.on('connect', () => {
+    const join = () => {
       socket.emit('joinOrderRoom', orderId);
       socket.emit('requestAgentLocation', orderId);
-    });
+    };
+    socket.on('connect', join);
+    if (socket.connected) join();
 
-    socket.on('agentLocationUpdated', ({ lat, lng }) => {
+    const onAgentLocation = ({ lat, lng }) => {
       if (Number.isFinite(lat) && Number.isFinite(lng)) {
         setAgentPos([lat, lng]);
         setMapReady(true);
       }
-    });
+    };
+    const onStatus = (p) => setOrder((prev) => (prev ? { ...prev, status: p.status, ...(p.order || {}) } : prev));
+    const onCancelled = ({ message }) => {
+      setOrder((prev) => (prev ? { ...prev, status: 'cancelled' } : prev));
+      dispatch(showToast({ message: message || 'Order cancelled', type: 'warning' }));
+    };
 
-    socket.on('order:status', ({ status }) => setOrder((p) => p ? { ...p, status } : p));
-    socket.on('orderStatusUpdated', ({ status }) => setOrder((p) => p ? { ...p, status } : p));
+    socket.on('agentLocationUpdated', onAgentLocation);
+    socket.on('order:update', onStatus);
+    socket.on('order:cancelled', onCancelled);
 
-    return () => socket.disconnect();
-  }, [orderId]);
+    return () => {
+      socket.off('connect', join);
+      socket.off('agentLocationUpdated', onAgentLocation);
+      socket.off('order:update', onStatus);
+      socket.off('order:cancelled', onCancelled);
+    };
+  }, [orderId, dispatch]);
 
   useEffect(() => {
     if (order?.status === 'out_for_delivery') setMapReady(true);
   }, [order?.status]);
 
-  const currentStepIndex = STATUS_STEPS.findIndex((s) => s.key === order?.status);
+  const currentStepIndex = statusStepIndex(order?.status);
   const isOutForDelivery = order?.status === 'out_for_delivery';
   const isDelivered = order?.status === 'delivered';
+
+  // Map points: agent (live), customer destination, restaurant pickup.
+  const destPos = useMemo(() => addressToLatLng(order?.deliveryAddress), [order?.deliveryAddress]);
+  const pickupPos = useMemo(() => shopToLatLng(order?.shop), [order?.shop]);
+
+  // Live distance + ETA from agent → destination. Prefer the real road route
+  // (from LiveMap/OSRM) when available; fall back to straight-line haversine.
+  const [routeInfo, setRouteInfo] = useState(null);
+  const haversineKm = agentPos && destPos
+    ? haversineDistanceKm(agentPos[0], agentPos[1], destPos[0], destPos[1])
+    : null;
+  const distanceKm = routeInfo?.distanceKm ?? haversineKm;
+  const eta = routeInfo?.durationMin ?? etaMinutes(distanceKm);
 
   if (!order) {
     return (
@@ -224,7 +219,13 @@ export default function OrderTrackingPage() {
             <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-100 flex-shrink-0">
               <Navigation className="w-4 h-4 text-orange-500" />
               <span className="font-semibold text-gray-800 text-sm">Live Delivery Tracking</span>
-              {isOutForDelivery && !isDelivered && (
+              {isOutForDelivery && !isDelivered && distanceKm != null && (
+                <span className="ml-auto flex items-center gap-2 text-xs font-semibold text-gray-700">
+                  <span className="bg-orange-50 text-orange-600 px-2 py-0.5 rounded-full">{formatDistance(distanceKm)}</span>
+                  {eta != null && <span className="bg-green-50 text-green-600 px-2 py-0.5 rounded-full">~{eta} min</span>}
+                </span>
+              )}
+              {isOutForDelivery && !isDelivered && distanceKm == null && (
                 <span className="ml-auto flex items-center gap-1.5 text-xs text-green-600 font-medium">
                   <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
                   Live
@@ -235,24 +236,16 @@ export default function OrderTrackingPage() {
             {/* Map body */}
             <div className="flex-1 relative" style={{ minHeight: '420px' }}>
               {mapReady ? (
-                agentPos ? (
-                  <MapContainer
-                    center={agentPos}
-                    zoom={15}
-                    style={{ height: '100%', width: '100%', position: 'absolute', inset: 0 }}
-                  >
-                    <TileLayer
-                      url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                      attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-                    />
-                    <Marker position={agentPos} icon={agentIcon}>
-                      <Popup>
-                        <span className="font-semibold text-orange-600">🛵 Delivery Agent</span><br />
-                        <span className="text-xs text-gray-500">Heading your way</span>
-                      </Popup>
-                    </Marker>
-                    <MapUpdater position={agentPos} />
-                  </MapContainer>
+                agentPos || destPos ? (
+                  <LiveMap
+                    agent={agentPos}
+                    destination={destPos}
+                    pickup={pickupPos}
+                    agentLabel="Delivery Agent — heading your way"
+                    destinationLabel="Your delivery address"
+                    pickupLabel={order.shop?.name || 'Restaurant'}
+                    onRouteInfo={setRouteInfo}
+                  />
                 ) : (
                   <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-50 gap-3">
                     <div className="w-14 h-14 bg-orange-50 rounded-full flex items-center justify-center">

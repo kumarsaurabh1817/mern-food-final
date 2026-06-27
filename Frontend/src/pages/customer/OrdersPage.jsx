@@ -2,26 +2,15 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Package, ChevronRight, Clock, XCircle, CreditCard, RefreshCw, AlertTriangle } from 'lucide-react';
 import api from '../../lib/axios';
-import { useDispatch } from 'react-redux';
+import { useDispatch, useSelector } from 'react-redux';
 import { showToast } from '../../features/ui/uiSlice';
 import { clearCart } from '../../features/cart/cartSlice';
+import { selectUser } from '../../features/auth/authSlice';
 import { useRazorpay } from '../../hooks/useRazorpay';
-
-const STATUS_COLORS = {
-  pending:          'bg-amber-50 text-amber-600 border-amber-200',
-  confirmed:        'bg-blue-50 text-blue-600 border-blue-200',
-  preparing:        'bg-purple-50 text-purple-600 border-purple-200',
-  ready_for_pickup: 'bg-cyan-50 text-cyan-600 border-cyan-200',
-  out_for_delivery: 'bg-orange-50 text-orange-600 border-orange-200',
-  delivered:        'bg-green-50 text-green-600 border-green-200',
-  cancelled:        'bg-red-50 text-red-600 border-red-200',
-};
-
-const STATUS_LABELS = {
-  pending: 'Pending', confirmed: 'Confirmed', preparing: 'Preparing',
-  ready_for_pickup: 'Ready for Pickup', out_for_delivery: 'Out for Delivery',
-  delivered: 'Delivered', cancelled: 'Cancelled',
-};
+import { getSocket } from '../../lib/socket';
+import { statusLabel } from '../../lib/orderStatus';
+import StatusBadge from '../../components/ui/StatusBadge';
+import LiveDot from '../../components/ui/LiveDot';
 
 // Detect payment-abandoned orders.
 // COD orders go straight to status:'confirmed' on creation — they are NEVER 'pending'.
@@ -34,6 +23,7 @@ const isPaymentPending = (order) =>
 export default function OrdersPage() {
   const navigate = useNavigate();
   const dispatch = useDispatch();
+  const user = useSelector(selectUser);
   const { openRazorpay } = useRazorpay();
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -47,6 +37,36 @@ export default function OrdersPage() {
   };
 
   useEffect(() => { fetchOrders(); }, []);
+
+  // ── Real-time: live status updates for the whole order list ──────────────
+  useEffect(() => {
+    const socket = getSocket();
+    const join = () => { if (user?.id) socket.emit('joinUserRoom', user.id); };
+    socket.on('connect', join);
+    if (socket.connected) join();
+
+    const onUpdate = (p) => {
+      setOrders((prev) =>
+        prev.map((o) => {
+          if (o._id !== p.orderId) return o;
+          // Toast only when the status actually advances.
+          if (o.status !== p.status && p.status !== 'pending') {
+            dispatch(showToast({
+              message: `Order #${o._id.slice(-6).toUpperCase()} is now ${statusLabel(p.status)}`,
+              type: p.status === 'cancelled' ? 'warning' : 'info',
+            }));
+          }
+          return { ...o, status: p.status, ...(p.order || {}) };
+        })
+      );
+    };
+
+    socket.on('order:update', onUpdate);
+    return () => {
+      socket.off('connect', join);
+      socket.off('order:update', onUpdate);
+    };
+  }, [user?.id, dispatch]);
 
   const handleCancel = async (orderId, e) => {
     e.stopPropagation();
@@ -120,7 +140,10 @@ export default function OrdersPage() {
 
   return (
     <div className="max-w-2xl mx-auto px-4 sm:px-6 py-8">
-      <h1 className="text-2xl font-black text-gray-900 mb-6">My Orders</h1>
+      <div className="flex items-center gap-3 mb-6">
+        <h1 className="text-2xl font-black text-gray-900">My Orders</h1>
+        <LiveDot />
+      </div>
 
       {orders.length === 0 ? (
         <div className="text-center py-20">
@@ -212,9 +235,7 @@ export default function OrdersPage() {
                       {new Date(order.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
                     </p>
                   </div>
-                  <span className={`flex-shrink-0 text-xs font-semibold px-2.5 py-1 rounded-full border ${STATUS_COLORS[order.status] || 'bg-gray-50 text-gray-600 border-gray-200'}`}>
-                    {STATUS_LABELS[order.status] || order.status}
-                  </span>
+                  <StatusBadge status={order.status} />
                 </div>
 
                 <p className="text-sm text-gray-500 mb-3 line-clamp-1">

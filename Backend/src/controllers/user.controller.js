@@ -1,10 +1,6 @@
 import User from "../models/User.js";
 import bcrypt from "bcrypt";
 
-
-// @desc    Get own profile details
-// @route   GET /api/users/me
-// @access  Private
 export const getOwnProfile = async (req, res, next) => {
   try {
     const user = await User.findById(req.user.id);
@@ -35,9 +31,6 @@ export const getOwnProfile = async (req, res, next) => {
   }
 };
 
-// @desc    Update name, phone, profile picture
-// @route   PATCH /api/users/me
-// @access  Private
 export const updateOwnProfile = async (req, res, next) => {
   try {
     const { name, phone, profilePicture } = req.body;
@@ -72,9 +65,6 @@ export const updateOwnProfile = async (req, res, next) => {
   }
 };
 
-// @desc    List saved delivery addresses
-// @route   GET /api/users/me/addresses
-// @access  Private
 export const getAddresses = async (req, res, next) => {
   try {
     const user = await User.findById(req.user.id);
@@ -93,13 +83,19 @@ export const getAddresses = async (req, res, next) => {
   }
 };
 
-// @desc    Add a new delivery address (max 5 per user)
-// @route   POST /api/users/me/addresses
-// @access  Private
 export const addAddress = async (req, res, next) => {
   try {
-    const { label, street, city, state, zipCode, country, isDefault, lat, lng } =
-      req.body;
+    const {
+      label,
+      street,
+      city,
+      state,
+      zipCode,
+      country,
+      isDefault,
+      lat,
+      lng,
+    } = req.body;
 
     const user = await User.findById(req.user.id);
     if (!user) {
@@ -166,7 +162,7 @@ export const addAddress = async (req, res, next) => {
       success: true,
       message: "Address added successfully",
       address: addedAddress,
-      addresses: user.addresses,       // full list — CheckoutPage reads data.addresses
+      addresses: user.addresses, // full list — CheckoutPage reads data.addresses
       totalAddresses: user.addresses.length,
       canAddMore: user.addresses.length < 5,
     });
@@ -175,9 +171,6 @@ export const addAddress = async (req, res, next) => {
   }
 };
 
-// @desc    Remove a saved address
-// @route   DELETE /api/users/me/addresses/:id
-// @access  Private
 export const removeAddress = async (req, res, next) => {
   try {
     const addressId = req.params.id;
@@ -219,14 +212,20 @@ export const removeAddress = async (req, res, next) => {
   }
 };
 
-// @desc    Update an existing saved address
-// @route   PATCH /api/users/me/addresses/:id
-// @access  Private
 export const updateAddress = async (req, res, next) => {
   try {
     const addressId = req.params.id;
-    const { label, street, city, state, zipCode, country, isDefault, lat, lng } =
-      req.body;
+    const {
+      label,
+      street,
+      city,
+      state,
+      zipCode,
+      country,
+      isDefault,
+      lat,
+      lng,
+    } = req.body;
 
     const user = await User.findById(req.user.id);
     if (!user) {
@@ -270,7 +269,9 @@ export const updateAddress = async (req, res, next) => {
     if (lng !== undefined) addr.lng = lng;
 
     if (isDefault) {
-      user.addresses.forEach((a) => { a.isDefault = false; });
+      user.addresses.forEach((a) => {
+        a.isDefault = false;
+      });
       addr.isDefault = true;
     }
 
@@ -286,9 +287,6 @@ export const updateAddress = async (req, res, next) => {
   }
 };
 
-// @desc    Change password (requires current password)
-// @route   POST /api/users/me/change-password
-// @access  Private
 export const changePassword = async (req, res, next) => {
   try {
     const { currentPassword, newPassword } = req.body;
@@ -300,19 +298,24 @@ export const changePassword = async (req, res, next) => {
       });
     }
 
-    if (newPassword.length < 8 ||
-        !/[A-Z]/.test(newPassword) ||
-        !/[0-9]/.test(newPassword) ||
-        !/[@$!%*#?&^()_\-+=<>]/.test(newPassword)) {
+    if (
+      newPassword.length < 8 ||
+      !/[A-Z]/.test(newPassword) ||
+      !/[0-9]/.test(newPassword) ||
+      !/[@$!%*#?&^()_\-+=<>]/.test(newPassword)
+    ) {
       return res.status(400).json({
         success: false,
-        message: "New password must be at least 8 characters with an uppercase letter, a number, and a special character.",
+        message:
+          "New password must be at least 8 characters with an uppercase letter, a number, and a special character.",
       });
     }
 
     const user = await User.findById(req.user.id).select("+password");
     if (!user) {
-      return res.status(404).json({ success: false, message: "User not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
     }
 
     const isMatch = await user.comparePassword(currentPassword);
@@ -337,7 +340,8 @@ export const changePassword = async (req, res, next) => {
 
     res.status(200).json({
       success: true,
-      message: "Password changed successfully. Please log in again on other devices.",
+      message:
+        "Password changed successfully. Please log in again on other devices.",
     });
   } catch (error) {
     next(error);

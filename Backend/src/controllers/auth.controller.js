@@ -3,33 +3,19 @@ import {
   generateAccessToken,
   generateRefreshToken,
   verifyRefreshToken,
+  verifyAccessToken,
 } from "../utils/token.utils.js";
 import { generateRandomToken, sendEmail } from "../utils/email.utils.js";
+import {
+  parseDurationToMs,
+  isPasswordValid,
+  PASSWORD_POLICY_MSG,
+} from "../utils/helper.js";
 import crypto from "crypto";
 
-/**
- * Convert a JWT duration string ('7d', '15m', '2h', '30s') to milliseconds.
- * Returns null if the format is not recognised.
- */
-function parseDurationToMs(str) {
-  if (!str || typeof str !== "string") return null;
-  const match = str.match(/^(\d+)([smhd])$/);
-  if (!match) return null;
-  const n = parseInt(match[1], 10);
-  const unit = match[2];
-  const map = { s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 };
-  return n * map[unit];
-}
 
-// ─── One-time Admin Bootstrap ─────────────────────────────────────────────────
-// POST /api/auth/setup-admin
-// Creates the first admin account. Permanently disabled once any admin exists.
-// S1 FIX: Requires a matching ADMIN_SETUP_SECRET in the request body to prevent
-// an attacker from seeding their own admin account before the legitimate one.
 export const setupAdmin = async (req, res, next) => {
   try {
-    // S1 FIX: Secret gate — must match ADMIN_SETUP_SECRET env variable.
-    // Set this in Backend/.env before running the first setup, then remove it.
     const setupSecret = process.env.ADMIN_SETUP_SECRET;
     if (!setupSecret || req.body.setupSecret !== setupSecret) {
       return res.status(403).json({
@@ -38,7 +24,6 @@ export const setupAdmin = async (req, res, next) => {
       });
     }
 
-    // Lock down: if even one admin exists, refuse forever
     const existingAdmin = await User.findOne({ role: "admin" });
     if (existingAdmin) {
       return res.status(403).json({
@@ -56,18 +41,10 @@ export const setupAdmin = async (req, res, next) => {
       });
     }
 
-    // Same password rules as regular signup
-    const pwdValid =
-      password.length >= 8 &&
-      /[A-Z]/.test(password) &&
-      /[0-9]/.test(password) &&
-      /[@$!%*#?&^()_\-+=<>]/.test(password);
-
-    if (!pwdValid) {
+    if (!isPasswordValid(password)) {
       return res.status(400).json({
         success: false,
-        message:
-          "Password must be at least 8 characters and include an uppercase letter, a number, and a special character.",
+        message: PASSWORD_POLICY_MSG,
       });
     }
 
@@ -108,34 +85,33 @@ export const setupAdmin = async (req, res, next) => {
 
 export const signup = async (req, res, next) => {
   try {
-    const { name, email, password, role, phone, kycDocuments } = req.body;
+    const { name, email, password, role, phone } = req.body;
 
-    // Password is already validated by signupSchema middleware before reaching here.
-    // This is a defence-in-depth check in case the route is called without middleware.
-    const pwdValid =
-      password.length >= 8 &&
-      /[A-Z]/.test(password) &&
-      /[0-9]/.test(password) &&
-      /[@$!%*#?&^()_\-+=<>]/.test(password);
-
-    if (!pwdValid) {
+    if (!name || !email || !password || !role) {
       return res.status(400).json({
         success: false,
-        message:
-          "Password must be at least 8 characters and include an uppercase letter, a number, and a special character.",
+        message: "name, email, password, and role are must to enter.",
+      });
+    }
+
+    if (!isPasswordValid(password)) {
+      return res.status(400).json({
+        success: false,
+        message: PASSWORD_POLICY_MSG,
       });
     }
 
     const existingUser = await User.findOne({ email: email.toLowerCase() });
     if (existingUser) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Email already in use" });
+      return res.status(400).json({
+        success: false,
+        message: "User with this email already exists.",
+      });
     }
 
     const validRoles = ["user", "owner", "delivery_boy"]; // Admin accounts must be seeded directly in the DB
     if (!validRoles.includes(role)) {
-      return res
+      return res    
         .status(400)
         .json({ success: false, message: "Invalid role selected" });
     }
@@ -146,11 +122,7 @@ export const signup = async (req, res, next) => {
       password,
       role,
       phone: phone || undefined,
-      kycDocuments:
-        role === "owner" || role === "delivery_boy" ? kycDocuments : undefined,
-      // All accounts are auto-verified — no email verification step
       isEmailVerified: true,
-      // Regular users are auto-approved; owners/delivery_boys need admin KYC approval
       isApprovedByAdmin: role === "user",
     });
 
@@ -171,6 +143,7 @@ export const signup = async (req, res, next) => {
       },
     });
   } catch (error) {
+    console.error(`Error in signup controller: ${error.message}`);
     next(error);
   }
 };
@@ -188,9 +161,6 @@ export const login = async (req, res, next) => {
         .json({ success: false, message: "Invalid credentials" });
     }
 
-    // B3 FIX: Check block + lockout BEFORE running the expensive bcrypt comparison.
-    // This prevents brute-force attempts from continuing to hit comparePassword
-    // even when the account is already locked or blocked.
     if (user.isBlocked) {
       return res.status(403).json({
         success: false,
@@ -198,30 +168,14 @@ export const login = async (req, res, next) => {
       });
     }
 
-    if (user.accountLockedUntil && user.accountLockedUntil > Date.now()) {
-      const minutesLeft = Math.ceil(
-        (user.accountLockedUntil - Date.now()) / 60000,
-      );
-      return res.status(403).json({
-        success: false,
-        message: `Account locked. Try again in ${minutesLeft} minute(s).`,
-      });
-    }
-
     // Only now run the expensive bcrypt comparison
     const isMatch = await user.comparePassword(password);
     if (!isMatch) {
-      user.failedLoginAttempts = (user.failedLoginAttempts || 0) + 1;
-      if (user.failedLoginAttempts >= 5) {
-        user.accountLockedUntil = Date.now() + 15 * 60 * 1000; // 15 min lockout
-      }
-      await user.save();
       return res
         .status(401)
         .json({ success: false, message: "Invalid credentials" });
     }
 
-    // Enforce admin approval for owners and delivery boys
     if (
       (user.role === "owner" || user.role === "delivery_boy") &&
       !user.isApprovedByAdmin
@@ -233,17 +187,13 @@ export const login = async (req, res, next) => {
       });
     }
 
-    user.failedLoginAttempts = 0;
-    user.accountLockedUntil = undefined;
-
     const accessToken = generateAccessToken(user);
     const refreshToken = generateRefreshToken(user);
 
-    // Prune refresh tokens that have already expired (past their JWT expiry).
-    // We decode iat + compare against the configured refresh TTL.
     const refreshTtlMs =
       parseDurationToMs(process.env.JWT_REFRESH_EXPIRES_IN) ||
       7 * 24 * 60 * 60 * 1000; // default 7 days
+
     const cutoff = Date.now() - refreshTtlMs;
     user.refreshTokens = user.refreshTokens
       .filter((t) => {
@@ -264,9 +214,6 @@ export const login = async (req, res, next) => {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "strict",
-      // Cookie lives 30 days so the browser doesn't discard it before the user
-      // returns. The JWT inside still expires in 7 days (JWT_REFRESH_EXPIRES_IN)
-      // so security is not weakened — an expired JWT is rejected by verifyRefreshToken.
       maxAge: 30 * 24 * 60 * 60 * 1000,
     });
 
@@ -282,6 +229,7 @@ export const login = async (req, res, next) => {
       },
     });
   } catch (error) {
+    console.log(`Error in login controller: ${error.message}`);
     next(error);
   }
 };
@@ -318,9 +266,10 @@ export const refresh = async (req, res, next) => {
     } catch {
       // JWT expired or tampered — clear the stale cookie and tell the client
       res.clearCookie("refreshToken");
-      return res
-        .status(401)
-        .json({ success: false, message: "Session expired. Please log in again." });
+      return res.status(401).json({
+        success: false,
+        message: "Session expired. Please log in again.",
+      });
     }
 
     const user = await User.findById(decoded.sub);
@@ -328,12 +277,12 @@ export const refresh = async (req, res, next) => {
     if (!user || !user.refreshTokens.includes(refreshToken)) {
       // Token was revoked (logout on another device) — clear cookie
       res.clearCookie("refreshToken");
-      return res
-        .status(401)
-        .json({ success: false, message: "Session revoked. Please log in again." });
+      return res.status(401).json({
+        success: false,
+        message: "Session revoked. Please log in again.",
+      });
     }
 
-    // ── Rolling refresh: issue a new refresh token and retire the old one ──
     const newRefreshToken = generateRefreshToken(user);
     user.refreshTokens = user.refreshTokens.filter((t) => t !== refreshToken);
     user.refreshTokens.push(newRefreshToken);
@@ -400,8 +349,6 @@ export const forgotPassword = async (req, res, next) => {
     user.passwordResetExpires = Date.now() + 60 * 60 * 1000; // 1 hour
     await user.save();
 
-    // FIX #6: Use CLIENT_URL (frontend) not req.get('host') (backend).
-    // The old URL pointed at localhost:5000 — clicking it returned raw JSON.
     const resetUrl = `${process.env.CLIENT_URL || "http://localhost:5173"}/reset-password/${token}`;
 
     const html = `

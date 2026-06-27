@@ -1,33 +1,13 @@
 import { useState, useEffect, useRef } from 'react';
-import { CheckCircle, ChefHat, Package, Clock, RefreshCw, Loader2, Banknote, CreditCard, ArrowRight, AlertCircle } from 'lucide-react';
+import { Package, Clock, RefreshCw, Loader2, Banknote, CreditCard, ArrowRight, AlertCircle } from 'lucide-react';
 import api from '../../lib/axios';
-import { io } from 'socket.io-client';
+import { getSocket } from '../../lib/socket';
 import { useDispatch } from 'react-redux';
 import { showToast } from '../../features/ui/uiSlice';
 import { useSelector } from 'react-redux';
 import { selectUser } from '../../features/auth/authSlice';
-import { TOKEN_KEY } from '../../lib/constants';
-
-// Consistent status badge colors
-const STATUS_BADGE = {
-  pending:          'bg-amber-50 text-amber-700 border-amber-200',
-  confirmed:        'bg-blue-50 text-blue-700 border-blue-200',
-  preparing:        'bg-purple-50 text-purple-700 border-purple-200',
-  ready_for_pickup: 'bg-cyan-50 text-cyan-700 border-cyan-200',
-  out_for_delivery: 'bg-orange-50 text-orange-700 border-orange-200',
-  delivered:        'bg-green-50 text-green-700 border-green-200',
-  cancelled:        'bg-red-50 text-red-700 border-red-200',
-};
-
-const STATUS_LABEL = {
-  pending:          'Pending',
-  confirmed:        'Confirmed',
-  preparing:        'Preparing',
-  ready_for_pickup: 'Ready for Pickup',
-  out_for_delivery: 'Out for Delivery',
-  delivered:        'Delivered',
-  cancelled:        'Cancelled',
-};
+import StatusBadge from '../../components/ui/StatusBadge';
+import LiveDot from '../../components/ui/LiveDot';
 
 // Each active status maps to the next action
 // All action buttons use one consistent style — only label changes
@@ -54,20 +34,33 @@ export default function OwnerOrdersPage() {
 
   useEffect(() => {
     fetchOrders();
-    const token = localStorage.getItem(TOKEN_KEY) || '';
-    const socket = io(import.meta.env.VITE_API_URL || 'http://localhost:5000', {
-      withCredentials: true,
-      auth: { token },
-    });
+    const socket = getSocket();
     socketRef.current = socket;
-    socket.on('connect', () => {
-      // Pass the actual user ID so the server puts us in the right room
-      if (user?.id) socket.emit('joinOwnerRoom', user.id);
-    });
-    socket.on('newOrder', () => fetchOrders());
-    socket.on('orderStatusUpdated', () => fetchOrders());
-    return () => socket.disconnect();
-  }, [user?.id]);
+
+    const join = () => { if (user?.id) socket.emit('joinOwnerRoom', user.id); };
+    socket.on('connect', join);
+    if (socket.connected) join();
+
+    // Listen to the unified events only (the backend also emits legacy aliases
+    // for older clients — we ignore those here to avoid double-handling).
+    const onNewOrder = ({ order }) => {
+      fetchOrders();
+      dispatch(showToast({
+        message: `New order received${order?.customer?.name ? ` from ${order.customer.name}` : ''}!`,
+        type: 'success',
+      }));
+    };
+    const onUpdate = () => fetchOrders();
+
+    socket.on('order:new', onNewOrder);
+    socket.on('order:update', onUpdate);
+
+    return () => {
+      socket.off('connect', join);
+      socket.off('order:new', onNewOrder);
+      socket.off('order:update', onUpdate);
+    };
+  }, [user?.id, dispatch]);
 
   const handleAction = async (order, route) => {
     setActioning(order._id);
@@ -88,7 +81,10 @@ export default function OwnerOrdersPage() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-black text-gray-900">Orders</h1>
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-black text-gray-900">Orders</h1>
+            <LiveDot />
+          </div>
           <p className="text-gray-400 text-sm">{orders.length} total orders</p>
         </div>
         <button onClick={fetchOrders} className="flex items-center gap-2 text-sm text-gray-500 hover:text-gray-700 border border-gray-200 px-3 py-2 rounded-xl hover:bg-gray-50">
@@ -121,8 +117,6 @@ export default function OwnerOrdersPage() {
       ) : (
         <div className="space-y-4">
           {filteredOrders.map((order) => {
-            const badgeClass = STATUS_BADGE[order.status] || 'bg-gray-50 text-gray-600 border-gray-200';
-            const statusLabel = STATUS_LABEL[order.status] || order.status;
             const isCOD = order.paymentMethod === 'cod';
             // An online order whose payment was cancelled/not completed must NOT
             // be actionable by the owner — the customer hasn't paid yet.
@@ -153,9 +147,7 @@ export default function OwnerOrdersPage() {
                     </p>
                   </div>
                   {/* Status badge */}
-                  <span className={`flex-shrink-0 text-xs font-semibold px-2.5 py-1 rounded-full border ${badgeClass}`}>
-                    {statusLabel}
-                  </span>
+                  <StatusBadge status={order.status} />
                 </div>
 
                 {/* Items */}

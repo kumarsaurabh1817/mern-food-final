@@ -1,7 +1,5 @@
 import { body } from "express-validator";
 
-// ─── Auth ─────────────────────────────────────────────────────────────────────
-
 export const signupSchema = [
   body("name")
     .trim()
@@ -16,9 +14,6 @@ export const signupSchema = [
     .withMessage("Email is required")
     .isEmail()
     .withMessage("Invalid email address")
-    // Disable Gmail-specific normalizations: by default normalizeEmail() strips
-    // dots and removes +subaddresses from Gmail addresses, which mutates the email
-    // the user entered and causes Mongoose regex/uniqueness failures.
     .normalizeEmail({ gmail_remove_dots: false, gmail_remove_subaddress: false }),
 
   body("password")
@@ -39,16 +34,10 @@ export const signupSchema = [
     .isIn(["user", "owner", "delivery_boy"])
     .withMessage("Role must be user, owner, or delivery_boy"),
 
-  // Accepts:
-  //   9876543210          → plain 10-digit
-  //   +91 9876543210      → country code with space
-  //   +919876543210       → country code no space
-  //   +1-800-555-1234     → US with dashes
-  //   (040) 2345-6789     → local with parens
   body("phone")
     .optional({ nullable: true, checkFalsy: true })
     .trim()
-    .customSanitizer((v) => v?.replace(/[\s\-\.]/g, "")) // strip spaces/dashes/dots before testing
+    .customSanitizer((v) => v?.replace(/[\s\-\.]/g, ""))
     .matches(/^(\+?\d{1,4})?[\(]?\d{6,14}[\)]?$/)
     .withMessage(
       "Phone must be 6–15 digits, optionally prefixed with a country code (e.g. +91 9876543210)",
@@ -90,8 +79,6 @@ export const resetPasswordSchema = [
     .matches(/[@$!%*#?&^()_\-+=<>]/)
     .withMessage("Password must contain at least one special character"),
 ];
-
-// ─── Orders ───────────────────────────────────────────────────────────────────
 
 export const checkoutSchema = [
   body("items")

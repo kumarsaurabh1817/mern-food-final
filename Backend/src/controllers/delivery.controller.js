@@ -1,6 +1,7 @@
 import Order from "../models/Order.js";
 import DeliveryProfile from "../models/DeliveryProfile.js";
-import { getIO } from "../socket/index.js";
+import Shop from "../models/Shop.js";
+import { getIO, emitOrderUpdate, emitPoolAdd, emitPoolRemove } from "../socket/index.js";
 import mongoose from "mongoose";
 
 // NOTE: DeliveryProfile is lazily created on first access (GET /api/delivery/me).
@@ -150,14 +151,14 @@ export const acceptOrder = async (req, res, next) => {
         .json({ success: false, message: "Order is no longer available" });
     }
 
+    // Real-time: order is now out for delivery — sync customer + owner, and
+    // remove it from every other agent's pool so two agents never collide.
+    const shopForOwner = await Shop.findById(order.shop).select("owner");
+    emitOrderUpdate(order, { ownerId: shopForOwner?.owner });
+    emitPoolRemove(order._id);
+
     try {
       const io = getIO();
-      io.to(`order_${order._id}`).emit("order:status", {
-        orderId: order._id,
-        status: "out_for_delivery",
-        deliveryAgent: req.user.id,
-      });
-
       const coords = profile?.currentLocation?.coordinates || [];
       const lng = Number(coords[0]);
       const lat = Number(coords[1]);
@@ -243,8 +244,21 @@ export const releaseOrder = async (req, res, next) => {
     }
     // For confirmed / preparing states, status stays unchanged — just unassign agent
 
+    const wasOutForDelivery = order.status === "ready_for_pickup"; // just reverted above
     order.deliveryAgent = null;    // explicitly null so $nin: rejectedOrders filter works
     await order.save();
+
+    // Real-time: keep customer + owner in sync, and put the order back in the
+    // pool for OTHER online agents (this agent self-excludes via rejectedOrders).
+    const shopForOwner = await Shop.findById(order.shop).select("owner");
+    emitOrderUpdate(order, { ownerId: shopForOwner?.owner });
+    if (wasOutForDelivery) {
+      const poolOrder = await Order.findById(order._id)
+        .populate("shop", "name address isApproved isOpen isSuspended")
+        .populate("customer", "name")
+        .lean();
+      emitPoolAdd(poolOrder || order);
+    }
 
     // Add to THIS agent's rejectedOrders so the order doesn't bounce straight
     // back into their own pool immediately after releasing.

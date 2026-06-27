@@ -1,7 +1,8 @@
 import Razorpay from "razorpay";
 import crypto from "crypto";
 import Order from "../models/Order.js";
-import { getIO } from "../socket/index.js";
+import Shop from "../models/Shop.js";
+import { emitOrderUpdate } from "../socket/index.js";
 
 // Fail fast at startup if keys are missing in production
 if (
@@ -116,16 +117,10 @@ export const verifyPayment = async (req, res, next) => {
     order.paymentStatus = "paid";
     await order.save();
 
-    // Notify order tracking page in real time
-    try {
-      const io = getIO();
-      io.to(`order_${order._id}`).emit("order:status", {
-        orderId: order._id,
-        status: "confirmed",
-        paymentStatus: "paid",
-        message: "Payment successful — your order has been confirmed!",
-      });
-    } catch (_) { /* socket not critical */ }
+    // Real-time: customer tracker + order list and the owner dashboard all
+    // reflect the now-paid, confirmed order.
+    const shopForOwner = await Shop.findById(order.shop).select("owner");
+    emitOrderUpdate(order, { ownerId: shopForOwner?.owner });
 
     return res
       .status(200)
@@ -176,16 +171,9 @@ export const handleRazorpayWebhook = async (req, res) => {
           order.paymentStatus = "paid";
           await order.save();
 
-          // Real-time push to tracking page
-          try {
-            const io = getIO();
-            io.to(`order_${order._id}`).emit("order:status", {
-              orderId: order._id,
-              status: "confirmed",
-              paymentStatus: "paid",
-              message: "Payment received — your order is confirmed!",
-            });
-          } catch (_) { /* socket not critical */ }
+          // Real-time push to customer + owner
+          const shopForOwner = await Shop.findById(order.shop).select("owner");
+          emitOrderUpdate(order, { ownerId: shopForOwner?.owner });
         }
       }
     }

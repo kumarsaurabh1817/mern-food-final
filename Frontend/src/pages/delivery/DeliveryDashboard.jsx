@@ -1,30 +1,16 @@
 import { useState, useEffect, useRef } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import {
   ToggleLeft, ToggleRight, CheckCircle, XCircle, Send, Loader2,
   Navigation, DollarSign, Package, RefreshCw, MapPin, UtensilsCrossed,
   IndianRupee, Bike, TrendingUp
 } from 'lucide-react';
 import api from '../../lib/axios';
-import { io } from 'socket.io-client';
+import { getSocket } from '../../lib/socket';
 import { useDispatch } from 'react-redux';
 import { showToast } from '../../features/ui/uiSlice';
-import { TOKEN_KEY } from '../../lib/constants';
-import 'leaflet/dist/leaflet.css';
-import L from 'leaflet';
-
-delete L.Icon.Default.prototype._getIconUrl;
-L.Icon.Default.mergeOptions({
-  iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png',
-  iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png',
-  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
-});
-
-function MapUpdater({ position }) {
-  const map = useMap();
-  useEffect(() => { if (position) map.setView(position, 15, { animate: true }); }, [position, map]);
-  return null;
-}
+import LiveMap from '../../components/map/LiveMap';
+import LiveDot from '../../components/ui/LiveDot';
+import { addressToLatLng, shopToLatLng, haversineDistanceKm, etaMinutes, formatDistance } from '../../lib/geo';
 
 export default function DeliveryDashboard() {
   const dispatch = useDispatch();
@@ -34,10 +20,17 @@ export default function DeliveryDashboard() {
   const [activeOrder, setActiveOrder] = useState(null);
   const [otp, setOtp] = useState('');
   const [myPos, setMyPos] = useState(null);
+  const [routeInfo, setRouteInfo] = useState(null);
   const [loading, setLoading] = useState(true);
   const [actioning, setActioning] = useState(null);
   const socketRef = useRef(null);
   const geoRef = useRef(null);
+  // Mirror live state into refs so the once-mounted socket handlers (empty deps)
+  // always read the current active order / online flag instead of stale closures.
+  const activeRef = useRef(null);
+  const onlineRef = useRef(false);
+  useEffect(() => { activeRef.current = activeOrder; }, [activeOrder]);
+  useEffect(() => { onlineRef.current = !!profile?.isOnline; }, [profile?.isOnline]);
 
   const fetchPool = async () => {
     try {
@@ -86,16 +79,52 @@ export default function DeliveryDashboard() {
 
   useEffect(() => {
     fetchAll();
-    const token = localStorage.getItem(TOKEN_KEY) || '';
-    const socket = io(import.meta.env.VITE_API_URL || 'http://localhost:5000', {
-      withCredentials: true,
-      auth: { token },
-    });
+    const socket = getSocket();
     socketRef.current = socket;
+
+    const joinPool = () => socket.emit('joinDeliveryPool');
+    socket.on('connect', joinPool);
+    if (socket.connected) joinPool();
+
+    // A new order became available — refetch the pool (only while idle + online).
+    const onPoolAdd = ({ order }) => {
+      if (activeRef.current || !onlineRef.current) return;
+      fetchPool();
+      dispatch(showToast({
+        message: `New order available${order?.shop?.name ? ` from ${order.shop.name}` : ''}!`,
+        type: 'info',
+      }));
+    };
+    // An order left the pool (accepted by someone / cancelled) — drop it locally.
+    const onPoolRemove = ({ orderId }) => {
+      setPool((prev) => prev.filter((o) => o._id !== orderId));
+    };
+    // Status change on the agent's active order (e.g. owner/admin cancelled it).
+    const onOrderUpdate = (p) => {
+      setActiveOrder((prev) => {
+        if (!prev || prev._id !== p.orderId) return prev;
+        if (p.status === 'cancelled' || p.status === 'delivered') {
+          dispatch(showToast({ message: `Order ${p.status}`, type: 'info' }));
+          fetchAll();
+          return null;
+        }
+        return { ...prev, status: p.status };
+      });
+    };
+
+    socket.on('pool:add', onPoolAdd);
+    socket.on('pool:remove', onPoolRemove);
+    socket.on('order:update', onOrderUpdate);
+
     return () => {
-      socket.disconnect();
+      socket.off('connect', joinPool);
+      socket.off('pool:add', onPoolAdd);
+      socket.off('pool:remove', onPoolRemove);
+      socket.off('order:update', onOrderUpdate);
+      socket.emit('leaveDeliveryPool');
       if (geoRef.current) navigator.geolocation.clearWatch(geoRef.current);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -199,6 +228,17 @@ export default function DeliveryDashboard() {
       dispatch(showToast({ message: err.response?.data?.message || 'Invalid OTP', type: 'error' }));
     }
   };
+
+  // Map points for the active delivery: agent = self (myPos), destination =
+  // customer's saved coordinates, pickup = restaurant (when shop has coords).
+  const destPos = addressToLatLng(activeOrder?.deliveryAddress);
+  const pickupPos = shopToLatLng(activeOrder?.shop);
+  // Prefer the real road route distance/ETA; fall back to straight-line.
+  const haversineKm = myPos && destPos
+    ? haversineDistanceKm(myPos[0], myPos[1], destPos[0], destPos[1])
+    : null;
+  const distanceKm = routeInfo?.distanceKm ?? haversineKm;
+  const eta = routeInfo?.durationMin ?? etaMinutes(distanceKm);
 
   if (loading) {
     return (
@@ -426,36 +466,30 @@ export default function DeliveryDashboard() {
           <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-100 flex-shrink-0">
             <Navigation className="w-4 h-4 text-orange-500" />
             <span className="font-semibold text-gray-800 text-sm">
-              {activeOrder ? 'Your Live Location' : 'Delivery Map'}
+              {activeOrder ? 'Route to Customer' : 'Delivery Map'}
             </span>
-            {activeOrder && myPos && (
-              <span className="ml-auto flex items-center gap-1.5 text-xs text-green-600 font-medium">
-                <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
-                Broadcasting
+            {activeOrder && myPos && destPos && distanceKm != null ? (
+              <span className="ml-auto flex items-center gap-2 text-xs font-semibold text-gray-700">
+                <span className="bg-orange-50 text-orange-600 px-2 py-0.5 rounded-full">{formatDistance(distanceKm)}</span>
+                {eta != null && <span className="bg-green-50 text-green-600 px-2 py-0.5 rounded-full">~{eta} min</span>}
               </span>
-            )}
+            ) : activeOrder && myPos ? (
+              <span className="ml-auto"><LiveDot label="Broadcasting" /></span>
+            ) : null}
           </div>
 
           {/* Map body */}
           <div className="flex-1 relative" style={{ minHeight: '470px' }}>
             {activeOrder && myPos ? (
-              <MapContainer
-                center={myPos}
-                zoom={15}
-                style={{ height: '100%', width: '100%', position: 'absolute', inset: 0 }}
-              >
-                <TileLayer
-                  url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                  attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-                />
-                <Marker position={myPos}>
-                  <Popup>
-                    <span className="font-semibold">🛵 Your Location</span><br />
-                    <span className="text-xs text-gray-500">Lat: {myPos[0].toFixed(5)}, Lng: {myPos[1].toFixed(5)}</span>
-                  </Popup>
-                </Marker>
-                <MapUpdater position={myPos} />
-              </MapContainer>
+              <LiveMap
+                agent={myPos}
+                destination={destPos}
+                pickup={pickupPos}
+                agentLabel="You"
+                destinationLabel="Customer delivery address"
+                pickupLabel={activeOrder.shop?.name || 'Restaurant'}
+                onRouteInfo={setRouteInfo}
+              />
             ) : activeOrder && !myPos ? (
               <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-50 gap-3">
                 <div className="w-14 h-14 bg-orange-50 rounded-full flex items-center justify-center">

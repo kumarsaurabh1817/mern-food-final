@@ -6,7 +6,7 @@ export const verifyToken = (req, res, next) => {
   if (!authHeader.startsWith("Bearer ")) {
     return res.status(401).json({
       success: false,
-      message: "Unauthorized: Missing bearer token",
+      message: "Unauthorized: Missing Authorization bearer token",
       errors: [],
     });
   }
@@ -16,7 +16,7 @@ export const verifyToken = (req, res, next) => {
   if (!token) {
     return res.status(401).json({
       success: false,
-      message: "Unauthorized: Invalid bearer token",
+      message: "Unauthorized: Invalid Authorization bearer token",
       errors: [],
     });
   }
@@ -28,7 +28,8 @@ export const verifyToken = (req, res, next) => {
       role: decoded.role,
     };
     return next();
-  } catch {
+  } catch(error) {
+    console.error("Token verification failed:", error.message);
     return res.status(401).json({
       success: false,
       message: "Unauthorized: Token is invalid or expired",

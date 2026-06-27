@@ -5,12 +5,21 @@ import { User, MapPin, Lock, Plus, Edit2, Trash2, Check, X, Loader2 } from 'luci
 import api from '../../lib/axios';
 import { useDispatch } from 'react-redux';
 import { showToast } from '../../features/ui/uiSlice';
+import AddressPicker from '../../components/map/AddressPicker';
 
 const TABS = [
   { id: 'profile', label: 'Profile', icon: User },
   { id: 'addresses', label: 'Addresses', icon: MapPin },
   { id: 'password', label: 'Password', icon: Lock },
 ];
+
+// Pick the first standard label that isn't already taken, then fall back to a
+// unique custom label so a new address never collides with an existing one.
+const nextLabel = (addresses = []) => {
+  const used = new Set(addresses.map((a) => (a.label || '').toLowerCase()));
+  const free = ['Home', 'Work', 'Other'].find((l) => !used.has(l.toLowerCase()));
+  return free || `Address ${addresses.length + 1}`;
+};
 
 export default function ProfilePage() {
   const dispatch = useDispatch();
@@ -50,13 +59,15 @@ export default function ProfilePage() {
         const { data } = await api.patch(`/users/me/addresses/${addrForm._id}`, addrForm);
         setAddresses(data.addresses || []);
       } else {
-        const { data } = await api.post('/users/me/addresses', addrForm);
+        // Ensure a unique label so a second Home/Work/Other isn't rejected.
+        const payload = { ...addrForm, label: addrForm.label?.trim() || nextLabel(addresses) };
+        const { data } = await api.post('/users/me/addresses', payload);
         setAddresses(data.addresses || []);
       }
       setAddrForm(null);
       dispatch(showToast({ message: 'Address saved!', type: 'success' }));
     } catch (err) {
-      dispatch(showToast({ message: 'Failed to save address', type: 'error' }));
+      dispatch(showToast({ message: err.response?.data?.message || 'Failed to save address', type: 'error' }));
     }
   };
 
@@ -145,6 +156,17 @@ export default function ProfilePage() {
                 <div key={addr._id} className="bg-white rounded-2xl border border-gray-100 p-4 shadow-sm">
                   {addrForm?._id === addr._id ? (
                     <form onSubmit={saveAddress} className="space-y-3">
+                      <AddressPicker
+                        value={addrForm.lat != null ? { lat: addrForm.lat, lng: addrForm.lng } : null}
+                        onPick={(a) => setAddrForm((prev) => ({
+                          ...prev,
+                          lat: a.lat, lng: a.lng,
+                          street: a.street || prev.street,
+                          city: a.city || prev.city,
+                          state: a.state || prev.state,
+                          zipCode: a.zipCode || prev.zipCode,
+                        }))}
+                      />
                       <div className="grid grid-cols-2 gap-3">
                         <input placeholder="Label" value={addrForm.label || ''} onChange={(e) => setAddrForm({ ...addrForm, label: e.target.value })} className="col-span-2 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-orange-400" />
                         <input placeholder="Street" value={addrForm.street || ''} onChange={(e) => setAddrForm({ ...addrForm, street: e.target.value })} required className="col-span-2 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-orange-400" />
@@ -173,6 +195,17 @@ export default function ProfilePage() {
               ))}
               {addrForm && !addrForm._id && (
                 <form onSubmit={saveAddress} className="bg-white rounded-2xl border border-orange-200 p-4 shadow-sm space-y-3">
+                  <AddressPicker
+                    value={addrForm.lat != null ? { lat: addrForm.lat, lng: addrForm.lng } : null}
+                    onPick={(a) => setAddrForm((prev) => ({
+                      ...prev,
+                      lat: a.lat, lng: a.lng,
+                      street: a.street || prev.street,
+                      city: a.city || prev.city,
+                      state: a.state || prev.state,
+                      zipCode: a.zipCode || prev.zipCode,
+                    }))}
+                  />
                   <div className="grid grid-cols-2 gap-3">
                     <input placeholder="Label (Home, Work...)" value={addrForm.label || ''} onChange={(e) => setAddrForm({ ...addrForm, label: e.target.value })} className="col-span-2 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-orange-400" />
                     <input placeholder="Street address" value={addrForm.street || ''} onChange={(e) => setAddrForm({ ...addrForm, street: e.target.value })} required className="col-span-2 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-orange-400" />

@@ -3,13 +3,10 @@ import Shop from "../models/Shop.js";
 import Order from "../models/Order.js";
 import { sendEmail } from "../utils/email.utils.js";
 
-// @desc    Platform KPIs: GMV, orders, active users, commission
-// @route   GET /api/admin/dashboard
+
 export const getDashboardKpis = async (req, res, next) => {
   try {
     const COMMISSION_RATE = 0.1;
-
-    // FIX #7: aggregate on DB — do NOT load all orders into RAM
     const [gmvAgg, activeUsers, pendingApprovals, totalShops] =
       await Promise.all([
         Order.aggregate([
@@ -183,8 +180,7 @@ export const rejectUser = async (req, res, next) => {
   }
 };
 
-// @desc    Block / unblock a user account
-// @route   PATCH /api/admin/users/:id/block
+
 export const toggleBlockUser = async (req, res, next) => {
   try {
     const user = await User.findById(req.params.id);

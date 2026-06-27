@@ -4,13 +4,15 @@ import bcrypt from "bcrypt";
 const AddressSchema = new mongoose.Schema(
   {
     label: { type: String, default: "Home" },
+
     street: { type: String, required: true },
     city: { type: String, required: true },
     state: { type: String, required: true },
+
     zipCode: { type: String, default: "000000" },
     country: { type: String, default: "India" },
     isDefault: { type: Boolean, default: false },
-    // Optional geocoordinates — used for delivery radius validation at checkout
+
     lat: { type: Number, default: null },
     lng: { type: Number, default: null },
   },
@@ -25,6 +27,7 @@ const UserSchema = new mongoose.Schema(
       trim: true,
       maxlength: 100,
     },
+
     email: {
       type: String,
       required: true,
@@ -38,7 +41,7 @@ const UserSchema = new mongoose.Schema(
     password: {
       type: String,
       required: true,
-      select: false, // never returned in API responses
+      select: false,
     },
     role: {
       type: String,
@@ -47,9 +50,6 @@ const UserSchema = new mongoose.Schema(
     },
     phone: {
       type: String,
-      // Accepts plain digits (10–15), with optional leading + and country code (1–4 digits).
-      // The express-validator middleware strips spaces/dashes before saving, so the value
-      // stored here is always a compact digit string like "+919876543210" or "9876543210".
       match: [
         /^(\+?\d{1,4})?\(?\d{6,14}\)?$/,
         "Please fill a valid phone number",
@@ -70,18 +70,6 @@ const UserSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
-    kycDocuments: {
-      aadhaar: String,
-      pan: String,
-      fssai: String,
-    },
-    failedLoginAttempts: {
-      type: Number,
-      default: 0,
-    },
-    accountLockedUntil: {
-      type: Date,
-    },
     addresses: [AddressSchema],
     refreshTokens: {
       type: [String],
@@ -92,14 +80,14 @@ const UserSchema = new mongoose.Schema(
     },
     emailVerificationExpires: {
       type: Date,
-      index: { expires: 0 }, // TTL-indexed
+      index: { expires: 0 },
     },
     passwordResetToken: {
       type: String,
     },
     passwordResetExpires: {
       type: Date,
-      index: { expires: 0 }, // TTL-indexed
+      index: { expires: 0 },
     },
   },
   {
@@ -107,14 +95,13 @@ const UserSchema = new mongoose.Schema(
   },
 );
 
-// Hash password before saving
 UserSchema.pre("save", async function () {
   if (!this.isModified("password")) return;
-  const rounds = parseInt(process.env.BCRYPT_SALT_ROUNDS, 10) || 12;
-  this.password = await bcrypt.hash(this.password, rounds);
+  const saltRounds = parseInt(process.env.BCRYPT_SALT_ROUNDS, 10) || 12;
+
+  this.password = await bcrypt.hash(this.password, saltRounds);
 });
 
-// Method to check password
 UserSchema.methods.comparePassword = async function (candidatePassword) {
   return await bcrypt.compare(candidatePassword, this.password);
 };

@@ -7,6 +7,12 @@ const AddressSchema = new mongoose.Schema(
     state: String,
     zipCode: String,
     country: String,
+    // Delivery destination coordinates — captured at checkout via browser
+    // geolocation. Used for the live tracking map (destination pin + route +
+    // ETA) and for the delivery-radius check. Optional: absent when the
+    // customer declines location access.
+    lat: { type: Number, default: null },
+    lng: { type: Number, default: null },
   },
   { _id: false },
 );
